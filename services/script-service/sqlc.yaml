@@ -1,0 +1,22 @@
+# sqlc 占位 (auth/project/asset 同款手写 repo, sqlc 化留到后续)。
+version: "2"
+sql:
+  - engine: postgresql
+    queries: queries
+    schema: migrations
+    gen:
+      go:
+        package: db
+        out: internal/repo/db
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_prepared_queries: false
+        emit_interface: true
+        emit_exact_table_names: false
+        emit_empty_slices: true
+        overrides:
+          - db_type: "uuid"
+            go_type:
+              import: "github.com/google/uuid"
+              type: "UUID"
