@@ -181,7 +181,11 @@ func (r *Jobs) Create(ctx context.Context, teamID, userID uuid.UUID, in CreateIn
 	}
 
 	err := r.WithTeamCtx(ctx, teamID, userID, func(tx pgx.Tx) error {
-		// 先尝试 INSERT, 撞 idempotency unique 时 fallback SELECT 已有行.
+		// SAVEPOINT 包 INSERT — 撞 idempotency unique 时事务 ROLLBACK TO 即可继续 SELECT.
+		// 不用 SAVEPOINT 直接 INSERT 撞 23505 会让整个事务 aborted (SQLSTATE 25P02).
+		if _, err := tx.Exec(ctx, "SAVEPOINT sp_insert"); err != nil {
+			return apperr.Internal("savepoint").WithCause(err)
+		}
 		row := tx.QueryRow(ctx,
 			`INSERT INTO render_jobs
 			   (team_id, project_id, user_id, priority, preset, resolution, format,
@@ -194,8 +198,9 @@ func (r *Jobs) Create(ctx context.Context, teamID, userID uuid.UUID, in CreateIn
 		if err := scanJob(row, &j); err != nil {
 			var pgErr *pgconn.PgError
 			if errors.As(err, &pgErr) && pgErr.Code == "23505" && in.IdempotencyKey != nil {
-				// idempotency_key 撞已有 — SELECT 出来. 注意 partial UNIQUE 是分区内
-				// 强制, 跨月可能有同 key 但 m1 简化忽略 (24h 窗口内典型重试不会跨月).
+				if _, e2 := tx.Exec(ctx, "ROLLBACK TO SAVEPOINT sp_insert"); e2 != nil {
+					return apperr.Internal("rollback to savepoint").WithCause(e2)
+				}
 				row := tx.QueryRow(ctx,
 					`SELECT `+jobColumns+` FROM render_jobs
 					 WHERE team_id = $1 AND idempotency_key = $2
@@ -205,6 +210,9 @@ func (r *Jobs) Create(ctx context.Context, teamID, userID uuid.UUID, in CreateIn
 				return scanJob(row, &j)
 			}
 			return apperr.Internal("create render_job").WithCause(err)
+		}
+		if _, err := tx.Exec(ctx, "RELEASE SAVEPOINT sp_insert"); err != nil {
+			return apperr.Internal("release savepoint").WithCause(err)
 		}
 		created = true
 		return nil

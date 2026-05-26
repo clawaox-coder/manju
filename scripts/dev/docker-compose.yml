@@ -9,13 +9,16 @@
 #   postgres-16      :5432  (db=manju, user=manju, pass=manju)
 #   redis-7          :6379
 #   minio            :9000 (s3 api), :9001 (console)
+#   kafka            :9092 (docker network), :9094 (host loopback)
 #   auth-service     :8001
 #   project-service  :8002
 #   script-service   :8003
 #   asset-service    :8004
 #   ai-gateway       :8005
+#   render-service   :8006
+#   render-worker    (no port, kafka consumer)
 #
-# 数据卷: ./data/{pg,redis,minio} — 已 gitignore.
+# 数据卷: ./data/{pg,redis,minio,kafka} — 已 gitignore.
 
 name: manju-local
 
@@ -74,6 +77,44 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    networks: [manju]
+
+  # KRaft 单节点 kafka (无 zookeeper). m1 dev 用; prod 走 MSK / Confluent Cloud.
+  # auto-create topics 开, 默认 partition=16 对齐 architecture.md §5 priority-queue.
+  kafka:
+    image: apache/kafka:3.8.0
+    container_name: manju-kafka
+    restart: unless-stopped
+    environment:
+      # KRaft 单节点配置 (apache/kafka 镜像约定: KAFKA_* 前缀, 直接映射 server.properties)
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:9094"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092,EXTERNAL://localhost:9094"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      # 主题默认
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: "16"
+      KAFKA_DEFAULT_REPLICATION_FACTOR: "1"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      # KRaft cluster id — apache/kafka 镜像启动脚本自动建 (无需手动 format).
+      CLUSTER_ID: "manju-local-cluster-1"
+    ports:
+      - "9092:9092"   # service/worker 走 docker network 时用 kafka:9092
+      - "9094:9094"   # host 进程 (本地 make dev) 走 localhost:9094
+    volumes:
+      - ./data/kafka:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
     networks: [manju]
 
   auth-service:
@@ -236,6 +277,78 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    networks: [manju]
+
+  render-service:
+    build:
+      context: ../../services/render-service
+      dockerfile: Dockerfile
+    image: manju/render-service:dev
+    container_name: manju-render
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      ENV: local
+      HTTP_ADDR: ":8006"
+      DATABASE_URL: "postgres://${POSTGRES_USER:-manju}:${POSTGRES_PASSWORD:-manju}@postgres:5432/${POSTGRES_DB:-manju}?sslmode=disable"
+      JWT_PUBLIC_KEY_PATH: /run/secrets/jwt-public.pem
+      JWT_ISSUER: manju-auth
+      CORS_ORIGINS: "http://localhost:5173,http://localhost:5174"
+      S3_ENDPOINT: "http://minio:9000"
+      S3_ACCESS_KEY: "${MINIO_ROOT_USER:-manjuadmin}"
+      S3_SECRET_KEY: "${MINIO_ROOT_PASSWORD:-manjuadmin}"
+      S3_BUCKET: manju-renders
+      S3_REGION: us-east-1
+      KAFKA_BROKERS: "kafka:9092"
+      KAFKA_TOPIC_REQUESTED: "render.requested"
+      LOG_LEVEL: info
+    ports:
+      - "8006:8006"
+    volumes:
+      - ./secrets/jwt-public.pem:/run/secrets/jwt-public.pem:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8006/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [manju]
+
+  render-worker:
+    build:
+      context: ../../services/render-service
+      dockerfile: Dockerfile.worker
+    image: manju/render-worker:dev
+    container_name: manju-render-worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      ENV: local
+      DATABASE_URL: "postgres://${POSTGRES_USER:-manju}:${POSTGRES_PASSWORD:-manju}@postgres:5432/${POSTGRES_DB:-manju}?sslmode=disable"
+      JWT_PUBLIC_KEY_PATH: /dev/null
+      S3_ENDPOINT: "http://minio:9000"
+      S3_ACCESS_KEY: "${MINIO_ROOT_USER:-manjuadmin}"
+      S3_SECRET_KEY: "${MINIO_ROOT_PASSWORD:-manjuadmin}"
+      S3_BUCKET: manju-renders
+      S3_REGION: us-east-1
+      KAFKA_BROKERS: "kafka:9092"
+      KAFKA_TOPIC_REQUESTED: "render.requested"
+      KAFKA_CONSUMER_GROUP: "render-workers"
+      WORKER_ID: "render-w-1"
+      FFMPEG_BIN: "/usr/bin/ffmpeg"
+      WORK_DIR: "/tmp/render"
+      LOG_LEVEL: info
     networks: [manju]
 
 networks:

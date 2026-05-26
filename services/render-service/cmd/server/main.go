@@ -19,6 +19,7 @@ import (
 
 	"github.com/manju-org/manju/services/render-service/internal/config"
 	"github.com/manju-org/manju/services/render-service/internal/handler"
+	rkafka "github.com/manju-org/manju/services/render-service/internal/kafka"
 	"github.com/manju-org/manju/services/render-service/internal/logger"
 	rmw "github.com/manju-org/manju/services/render-service/internal/middleware"
 	"github.com/manju-org/manju/services/render-service/internal/repo"
@@ -58,9 +59,11 @@ func main() {
 	}
 
 	repoJ := repo.New(pool)
-	// Enqueuer: m1 用 NoopEnqueuer (service 不发 kafka). 真 kafka producer 由
-	// 后续提交接入, 替换为 kafka.Producer (实现 service.Enqueuer 接口).
-	svcJ := service.New(repoJ, pool, service.NoopEnqueuer{})
+	// kafka producer: 起进程时建一次 writer, 跨请求复用. 优雅关闭 srv 之后 Close.
+	producer := rkafka.NewProducer(cfg.KafkaBrokers, cfg.KafkaTopicRequested)
+	defer func() { _ = producer.Close() }()
+
+	svcJ := service.New(repoJ, pool, producer)
 	h := &handler.Jobs{Svc: svcJ}
 
 	r := chi.NewRouter()

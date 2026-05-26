@@ -1,0 +1,39 @@
+# render-worker 镜像 — 内置 ffmpeg 与 go binary.
+#
+# multi-stage:
+#   builder: golang 编 worker binary
+#   runtime: jrottenberg/ffmpeg (debian-based, 含 ffmpeg + fontconfig + 自带字体)
+
+# --- build stage ---
+FROM golang:1.25-alpine AS builder
+
+ENV GOPROXY=https://goproxy.cn,direct \
+    GOSUMDB=off \
+    CGO_ENABLED=0 \
+    GOOS=linux
+
+WORKDIR /src
+
+COPY go.mod go.sum* ./
+RUN go mod download
+
+COPY . .
+RUN go build \
+	-trimpath -ldflags '-s -w' \
+	-o /out/render-worker ./cmd/worker
+
+# --- runtime stage ---
+# jrottenberg/ffmpeg 提供 ffmpeg + 字体. tag 7.0-ubuntu 是 debian 派生, 比 alpine 兼容性好.
+FROM jrottenberg/ffmpeg:7.0-ubuntu
+
+# fontconfig 默认随 ubuntu 一起, 但 drawtext 直接给 fontsize 时会用默认字体, 已足够.
+# ffmpeg binary path 在镜像里默认是 /usr/local/bin/ffmpeg, 部分版本是 /usr/bin/ffmpeg.
+# 用 symlink 兜底, FFMPEG_BIN env 默认 /usr/bin/ffmpeg.
+RUN [ -e /usr/bin/ffmpeg ] || ln -s "$(command -v ffmpeg)" /usr/bin/ffmpeg
+
+WORKDIR /app
+COPY --from=builder /out/render-worker /app/render-worker
+
+# jrottenberg/ffmpeg 默认 ENTRYPOINT 是 ffmpeg, 必须覆盖.
+ENTRYPOINT ["/app/render-worker"]
+CMD []
