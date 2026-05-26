@@ -1,0 +1,95 @@
+import { request } from './client';
+
+const ASSET_BASE = import.meta.env.VITE_PUBLIC_ASSET_API_BASE ?? 'http://localhost:8004';
+
+export type AssetType = 'character' | 'scene' | 'prop' | 'music' | 'sfx' | 'voice';
+
+export interface AssetDTO {
+  id: string;
+  team_id: string | null;
+  type: AssetType;
+  name: string;
+  description: string | null;
+  tags: string[];
+  file_url: string | null;
+  thumbnail_url: string | null;
+  bg_style: string | null;
+  avatar: string | null;
+  duration_ms: number | null;
+  uses_count: number;
+  created_by: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ListMeta {
+  page_size: number;
+  has_more: boolean;
+  next_cursor: string | null;
+}
+
+export interface ListAssetsParams {
+  type?: AssetType;
+  q?: string;
+  tags?: string;
+  cursor?: string;
+  pageSize?: number;
+}
+
+export async function listAssets(params: ListAssetsParams = {}) {
+  const qs = buildQuery({ type: params.type, q: params.q, tags: params.tags, cursor: params.cursor, page_size: params.pageSize });
+  return request<{ data: AssetDTO[]; meta: ListMeta }>(`/v1/assets${qs}`, { base: ASSET_BASE }) as unknown as { data: AssetDTO[]; meta: ListMeta };
+}
+
+export async function getAsset(id: string): Promise<AssetDTO> {
+  return request<AssetDTO>(`/v1/assets/${id}`, { base: ASSET_BASE });
+}
+
+export interface CreateAssetInput {
+  type: AssetType;
+  name: string;
+  description?: string;
+  tags?: string[];
+  file_url?: string;
+  avatar?: string;
+  duration_ms?: number;
+  metadata?: Record<string, unknown>;
+}
+
+export async function createAsset(input: CreateAssetInput): Promise<AssetDTO> {
+  return request<AssetDTO>('/v1/assets', { method: 'POST', body: input, base: ASSET_BASE });
+}
+
+export async function updateAsset(id: string, input: Partial<Omit<CreateAssetInput, 'type'>>): Promise<AssetDTO> {
+  return request<AssetDTO>(`/v1/assets/${id}`, { method: 'PATCH', body: input, base: ASSET_BASE });
+}
+
+export async function deleteAsset(id: string): Promise<void> {
+  return request<void>(`/v1/assets/${id}`, { method: 'DELETE', base: ASSET_BASE });
+}
+
+export interface SignUploadInput {
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  purpose: string;
+}
+
+export interface SignUploadResult {
+  upload_url: string;
+  method: string;
+  headers: Record<string, string>;
+  file_url: string;
+  expires_in: number;
+}
+
+export async function signUpload(input: SignUploadInput): Promise<SignUploadResult> {
+  return request<SignUploadResult>('/v1/upload/sign', { method: 'POST', body: input, base: ASSET_BASE });
+}
+
+function buildQuery(params: Record<string, unknown>): string {
+  const entries = Object.entries(params).filter(([, v]) => v != null && v !== '');
+  if (entries.length === 0) return '';
+  return '?' + entries.map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`).join('&');
+}

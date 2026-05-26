@@ -1,0 +1,30 @@
+# sqlc generates Go from queries/*.sql against migrations/*.sql.
+# regen: `make sqlc` (in services/project-service/).
+# 当前手写 internal/repo/projects.go, 这里仅作为未来 sqlc 化的目标占位
+# (auth-service 同等做法, 见其 queries/auth.sql 文件头注释).
+
+version: "2"
+sql:
+  - engine: postgresql
+    queries: queries
+    schema: migrations
+    gen:
+      go:
+        package: db
+        out: internal/repo/db
+        sql_package: pgx/v5
+        emit_json_tags: false
+        emit_pointers_for_null_types: true
+        emit_prepared_queries: false
+        emit_interface: true
+        emit_exact_table_names: false
+        emit_empty_slices: true
+        overrides:
+          - db_type: "uuid"
+            go_type:
+              import: "github.com/google/uuid"
+              type: "UUID"
+          - db_type: "project_status"
+            go_type:
+              import: "github.com/manju-org/manju/services/project-service/internal/repo/db"
+              type: "ProjectStatus"

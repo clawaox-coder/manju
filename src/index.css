@@ -1,0 +1,124 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@custom-variant dark (&:is(.dark *));
+
+/* ============ DESIGN TOKENS ============ */
+@theme inline {
+  /* Brand purple — matches original #7c3aed */
+  --color-brand-50: #f5f3ff;
+  --color-brand-100: #ede9fe;
+  --color-brand-200: #ddd6fe;
+  --color-brand-300: #c4b5fd;
+  --color-brand-400: #a78bfa;
+  --color-brand-500: #8b5cf6;
+  --color-brand-600: #7c3aed;
+  --color-brand-700: #6d28d9;
+  --color-brand-800: #5b21b6;
+  --color-brand-900: #4c1d95;
+
+  /* Semantic tokens (light theme defaults) */
+  --color-background: oklch(1 0 0);
+  --color-foreground: oklch(0.145 0 0);
+  --color-card: oklch(1 0 0);
+  --color-card-foreground: oklch(0.145 0 0);
+  --color-popover: oklch(1 0 0);
+  --color-popover-foreground: oklch(0.145 0 0);
+  --color-primary: var(--color-brand-600);
+  --color-primary-foreground: oklch(0.985 0 0);
+  --color-secondary: oklch(0.97 0 0);
+  --color-secondary-foreground: oklch(0.205 0 0);
+  --color-muted: oklch(0.97 0 0);
+  --color-muted-foreground: oklch(0.556 0 0);
+  --color-accent: oklch(0.97 0 0);
+  --color-accent-foreground: oklch(0.205 0 0);
+  --color-destructive: oklch(0.577 0.245 27.325);
+  --color-destructive-foreground: oklch(0.985 0 0);
+  --color-border: oklch(0.922 0 0);
+  --color-input: oklch(0.922 0 0);
+  --color-ring: var(--color-brand-500);
+
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --radius-2xl: 1.5rem;
+
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei',
+    'Segoe UI', system-ui, sans-serif;
+}
+
+.dark {
+  --color-background: oklch(0.145 0 0);
+  --color-foreground: oklch(0.985 0 0);
+  --color-card: oklch(0.205 0 0);
+  --color-card-foreground: oklch(0.985 0 0);
+  --color-popover: oklch(0.205 0 0);
+  --color-popover-foreground: oklch(0.985 0 0);
+  --color-primary: var(--color-brand-500);
+  --color-primary-foreground: oklch(0.985 0 0);
+  --color-secondary: oklch(0.269 0 0);
+  --color-secondary-foreground: oklch(0.985 0 0);
+  --color-muted: oklch(0.269 0 0);
+  --color-muted-foreground: oklch(0.708 0 0);
+  --color-accent: oklch(0.269 0 0);
+  --color-accent-foreground: oklch(0.985 0 0);
+  --color-border: oklch(0.269 0 0);
+  --color-input: oklch(0.269 0 0);
+}
+
+/* ============ BASE STYLES ============ */
+@layer base {
+  * { @apply border-border; }
+  html, body, #root { height: 100%; }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: var(--font-sans);
+    font-size: 14px;
+    margin: 0;
+  }
+  kbd {
+    @apply px-1.5 py-0.5 bg-muted border border-border rounded text-[10px] font-mono;
+  }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: oklch(0.85 0 0); border-radius: 5px; }
+  .dark ::-webkit-scrollbar-thumb { background: oklch(0.3 0 0); }
+}
+
+/* ============ UTILITY CLASSES ============ */
+@utility gradient-purple {
+  background: linear-gradient(135deg, #7c3aed, #ec4899);
+}
+@utility gradient-purple-soft {
+  background: linear-gradient(135deg, #ede9fe, #fce7f3);
+}
+@utility shadow-purple {
+  box-shadow: 0 8px 24px -8px rgb(124 58 237 / 0.4);
+}
+
+/* Placeholder scene/character backgrounds (gradients) */
+.scene-bg-1 { background: linear-gradient(135deg, #fef3c7, #fbcfe8); }
+.scene-bg-2 { background: linear-gradient(135deg, #ddd6fe, #fbcfe8); }
+.scene-bg-3 { background: linear-gradient(135deg, #1e293b, #7e22ce); }
+.scene-bg-4 { background: linear-gradient(135deg, #fde68a, #f59e0b); }
+.scene-bg-5 { background: linear-gradient(135deg, #fed7aa, #fdba74); }
+.scene-bg-6 { background: linear-gradient(135deg, #fbcfe8, #f97316); }
+.scene-bg-7 { background: linear-gradient(135deg, #312e81, #db2777); }
+.scene-bg-hero { background: linear-gradient(135deg, #6366f1 0%, #ec4899 50%, #f59e0b 100%); }
+
+.char-bg-1 { background: linear-gradient(135deg, #fef3c7, #fbcfe8); }
+.char-bg-2 { background: linear-gradient(135deg, #fce7f3, #fbcfe8); }
+.char-bg-3 { background: linear-gradient(135deg, #e0e7ff, #c7d2fe); }
+.char-bg-4 { background: linear-gradient(135deg, #d1fae5, #a7f3d0); }
+.char-bg-5 { background: linear-gradient(135deg, #fed7aa, #fdba74); }
+.char-bg-6 { background: linear-gradient(135deg, #e9d5ff, #d8b4fe); }
+
+.audio-wave {
+  background-image: repeating-linear-gradient(
+    90deg,
+    transparent 0 2px,
+    var(--color-brand-400) 2px 4px
+  );
+  mask-image: linear-gradient(180deg, transparent 0, #000 30%, #000 70%, transparent 100%);
+}

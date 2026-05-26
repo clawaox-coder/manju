@@ -1,0 +1,5 @@
+# local-only state
+data/
+secrets/
+.env
+.env.local

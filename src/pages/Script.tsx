@@ -1,0 +1,242 @@
+import { useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Sparkles, Send, Save, FileText, Wand2, ArrowRight, MessageSquare } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { useStore } from '@/store';
+import { toast } from 'sonner';
+import { cn } from '@/lib/utils';
+
+const SAMPLE_SCRIPT = `# 都市修仙之我有一个万界商城
+
+## 第一集 · 觉醒
+
+【场景 1】颁奖典礼现场 · 内 · 夜
+[聚光灯下, 一位身穿白色礼服的年轻女子走上舞台。]
+
+主持人: 恭喜林夕, 获得本届最佳新人奖!
+
+[全场掌声雷动。林夕接过奖杯, 目光坚定。]
+
+林夕: (颤抖着) 这一刻, 我等了三年...
+
+【场景 2】后台 · 内 · 夜
+[特写: 林夕的眼眶湿润, 一滴泪滑落。]
+
+林夕: (内心独白) 妈, 我做到了...
+
+【场景 3】化妆间 · 内 · 夜
+[镜子前, 林夕拨通了视频电话。]
+
+林夕: 妈, 我得奖了!
+
+奶奶: (在画面那头) 好孩子, 奶奶就知道你是最棒的。
+
+【场景 4】记者采访区 · 内 · 夜
+记者: 林夕小姐, 请问下一步的计划是?
+
+林夕: (微笑) 我希望能拍一部关于普通人的电影。`;
+
+const AI_QUICK_ACTIONS = [
+  { label: '续写下一场', prompt: '续写下一场剧情' },
+  { label: '生成对白', prompt: '为当前角色生成对白' },
+  { label: '优化情节', prompt: '优化当前情节的节奏' },
+  { label: '提取分镜', prompt: '从剧本中提取所有分镜' }
+];
+
+interface ChatMsg {
+  role: 'user' | 'ai';
+  text: string;
+}
+
+export default function Script() {
+  const navigate = useNavigate();
+  const projectName = useStore((s) => s.projectName);
+  const [script, setScript] = useState(SAMPLE_SCRIPT);
+  const [askInput, setAskInput] = useState('');
+  const [chat, setChat] = useState<ChatMsg[]>([
+    { role: 'ai', text: '你好! 我是 AI 创作助手, 可以帮你续写剧本、生成对白、提取分镜。试试左侧的快速操作?' }
+  ]);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const wordCount = useMemo(() => script.replace(/\s/g, '').length, [script]);
+  const sceneCount = useMemo(() => (script.match(/【场景/g) || []).length, [script]);
+  const dialogCount = useMemo(() => (script.match(/^[^[【\s].*?:/gm) || []).length, [script]);
+
+  function send(prompt: string) {
+    if (!prompt.trim()) return;
+    setChat((c) => [...c, { role: 'user', text: prompt }]);
+    setAskInput('');
+    setTimeout(() => {
+      setChat((c) => [
+        ...c,
+        {
+          role: 'ai',
+          text: `好的, 我来帮你${prompt.includes('续写') ? '续写剧情' : prompt.includes('对白') ? '生成对白' : prompt.includes('分镜') ? '提取分镜' : '处理这个请求'}...
+
+【生成结果】
+${prompt.includes('续写') ? '【场景 5】城市夜景 · 外 · 夜\n[镜头拉远, 林夕走出剧院, 抬头看向繁星点点的夜空。]' : prompt.includes('对白') ? '林夕: 这条路再难, 我也要走下去。' : '已识别 4 个场景, 6 段对白, 2 个角色, 是否填充到分镜?'}`
+        }
+      ]);
+    }, 800);
+  }
+
+  function splitShot() {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    const pos = ta.selectionStart;
+    const next = script.slice(0, pos) + '\n\n【场景 ?】\n' + script.slice(pos);
+    setScript(next);
+    setTimeout(() => ta.focus(), 0);
+    toast.success('已插入分镜分隔符');
+  }
+
+  function autoGenerate() {
+    toast.info('AI 正在生成分镜...');
+    setTimeout(() => {
+      toast.success('已生成 6 个分镜');
+      navigate('/storyboard');
+    }, 1500);
+  }
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Top bar */}
+      <div className="border-b border-border bg-card px-6 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <button onClick={() => navigate('/projects')} className="text-xs text-brand-600 hover:underline">
+            {projectName} ›
+          </button>
+          <h1 className="text-base font-semibold">剧本创作</h1>
+          <Badge variant="success">自动保存 · 1 分钟前</Badge>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={() => toast.success('已保存草稿')}>
+            <Save className="w-3.5 h-3.5" /> 保存草稿
+          </Button>
+          <Button size="sm" onClick={autoGenerate}>
+            <ArrowRight className="w-3.5 h-3.5" /> 下一步: 生成分镜
+          </Button>
+        </div>
+      </div>
+
+      <div className="flex flex-1 overflow-hidden">
+        {/* Left: Editor */}
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <div className="border-b border-border bg-card px-6 py-2 flex items-center gap-3 text-xs text-muted-foreground">
+            <FileText className="w-3.5 h-3.5" />
+            <span>scene-1.md</span>
+            <span className="ml-auto flex items-center gap-3">
+              <span>
+                字数 <strong className="text-foreground">{wordCount}</strong>
+              </span>
+              <span>
+                场景 <strong className="text-foreground">{sceneCount}</strong>
+              </span>
+              <span>
+                对白 <strong className="text-foreground">{dialogCount}</strong>
+              </span>
+            </span>
+          </div>
+          <div className="flex items-center gap-1 px-6 py-2 border-b border-border bg-card/50">
+            <Button variant="ghost" size="sm" onClick={splitShot}>
+              + 插入分镜
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => toast.info('Markdown 格式工具栏')}>
+              加粗
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => toast.info('Markdown 格式工具栏')}>
+              斜体
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => send('为当前段落生成对白')}>
+              <Sparkles className="w-3.5 h-3.5" /> AI 重写
+            </Button>
+          </div>
+          <textarea
+            ref={textareaRef}
+            value={script}
+            onChange={(e) => setScript(e.target.value)}
+            className="flex-1 px-12 py-8 text-sm font-mono leading-relaxed bg-card outline-none resize-none"
+            spellCheck={false}
+          />
+        </div>
+
+        {/* Right: AI Assistant */}
+        <div className="w-96 border-l border-border bg-card flex flex-col">
+          <div className="p-4 border-b border-border">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-8 h-8 rounded-lg gradient-purple flex items-center justify-center">
+                <Sparkles className="w-4 h-4 text-white" />
+              </div>
+              <div>
+                <div className="font-semibold text-sm">AI 创作助手</div>
+                <div className="text-[11px] text-muted-foreground">Sonnet 4.6 · 在线</div>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-1.5">
+              {AI_QUICK_ACTIONS.map((a) => (
+                <button
+                  key={a.label}
+                  onClick={() => send(a.prompt)}
+                  className="px-2 py-1.5 rounded-lg border border-border text-xs hover:bg-accent text-left"
+                >
+                  <Wand2 className="w-3 h-3 inline mr-1" /> {a.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            <AnimatePresence initial={false}>
+              {chat.map((m, i) => (
+                <motion.div
+                  key={i}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className={cn('flex gap-2', m.role === 'user' && 'flex-row-reverse')}
+                >
+                  <div
+                    className={cn(
+                      'w-7 h-7 rounded-full flex-shrink-0 flex items-center justify-center text-xs',
+                      m.role === 'ai' ? 'gradient-purple text-white' : 'bg-muted'
+                    )}
+                  >
+                    {m.role === 'ai' ? <Sparkles className="w-3 h-3" /> : '我'}
+                  </div>
+                  <div
+                    className={cn(
+                      'rounded-xl px-3 py-2 text-xs max-w-[80%] whitespace-pre-wrap',
+                      m.role === 'ai' ? 'bg-muted' : 'gradient-purple text-white'
+                    )}
+                  >
+                    {m.text}
+                  </div>
+                </motion.div>
+              ))}
+            </AnimatePresence>
+          </div>
+
+          <div className="p-3 border-t border-border">
+            <div className="flex gap-2">
+              <input
+                value={askInput}
+                onChange={(e) => setAskInput(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && send(askInput)}
+                placeholder="向 AI 提问..."
+                className="flex-1 px-3 py-2 rounded-lg border border-border text-xs focus:border-brand-400 focus:outline-none bg-background"
+              />
+              <Button size="icon" className="size-9" onClick={() => send(askInput)} disabled={!askInput.trim()}>
+                <Send className="w-3.5 h-3.5" />
+              </Button>
+            </div>
+            <div className="flex items-center gap-1 mt-2 text-[10px] text-muted-foreground">
+              <MessageSquare className="w-3 h-3" />
+              <span>Enter 发送 · Shift+Enter 换行</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
