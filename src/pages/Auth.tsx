@@ -5,7 +5,6 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import { register, login } from '@/lib/api/auth';
-import { cn } from '@/lib/utils';
 
 export default function AuthPage() {
   const navigate = useNavigate();

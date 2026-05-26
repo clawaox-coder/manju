@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import * as api from '@/lib/api/scripts';
-import type { ScriptDTO, ShotDTO, CreateShotInput } from '@/lib/api/scripts';
+import type { CreateShotInput } from '@/lib/api/scripts';
 
 export function useScript(projectId: string | undefined) {
   return useQuery({

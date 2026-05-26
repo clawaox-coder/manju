@@ -1,7 +1,6 @@
-import { useQuery, useMutation, useQueryClient, useInfiniteQuery } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import * as api from '@/lib/api/projects';
-import type { ProjectDTO, ListProjectsParams, ListMeta, CreateProjectInput } from '@/lib/api/projects';
+import type { ProjectDTO, ListProjectsParams, CreateProjectInput } from '@/lib/api/projects';
 import type { Project } from '@/types';
 
 export type { ProjectDTO };

@@ -1,13 +1,9 @@
 import type {
-  Project,
   Shot,
   Character,
   MusicTrack,
   SfxClip,
   Notification,
-  Draft,
-  SharedProject,
-  TrashItem,
   ConsistencyEntry,
   Prop,
   Scene,
@@ -16,14 +12,9 @@ import type {
   Invoice
 } from '@/types';
 
-export const initialProjects: Project[] = [
-  { id: 1, name: '都市修仙之我有一个万界商城', type: '都市', status: 'rendering', progress: 78, version: 'V3', updated: '5 分钟前', bg: 'scene-bg-2' },
-  { id: 2, name: '总裁追妻火葬场', type: '言情', status: 'done', progress: 100, version: 'V5', updated: '2 小时前', bg: 'scene-bg-5' },
-  { id: 3, name: '废材天才嫡小姐', type: '古风', status: 'done', progress: 100, version: 'V2', updated: '昨天', bg: 'scene-bg-1' },
-  { id: 4, name: '我的奶奶是大魔王', type: '搞笑', status: 'draft', progress: 0, version: 'V1', updated: '2 天前', bg: 'scene-bg-4' },
-  { id: 5, name: '逆袭吧!打工人', type: '励志', status: 'done', progress: 100, version: 'V3', updated: '3 天前', bg: 'scene-bg-6' },
-  { id: 6, name: '霓虹酒吧的秘密', type: '悬疑', status: 'rendering', progress: 32, version: 'V1', updated: '4 天前', bg: 'scene-bg-7' }
-];
+// 注: initialProjects / initialDrafts / initialShared / initialTrash 已由后端 project-service 取代,
+// 见 src/hooks/useProjectApi.ts. 这里只保留尚无后端的领域 (assets/scripts/notifications/...) 的 mock,
+// 等 T-007/T-008/notification-service 上线时各自删除对应条目.
 
 export const initialShots: Shot[] = [
   { id: 1, num: '01', title: '场景 1 · 颁奖现场', type: '中景', duration: 5, dialog: '"恭喜林夕, 获得最佳新人奖!"', bg: 'scene-bg-hero' },
@@ -72,27 +63,6 @@ export const initialNotifications: Notification[] = [
   { id: 2, icon: 'user', color: 'purple', title: '林夕 评论了你的项目', body: '"第 3 镜的转场可以再快一点"', time: '20 分钟前', read: false },
   { id: 3, icon: 'star', color: 'yellow', title: '套餐即将到期', body: '当前团队版将于 6 月 15 日续费', time: '2 小时前', read: false },
   { id: 4, icon: 'check', color: 'green', title: 'AI 分镜生成完成', body: '已为「霓虹酒吧的秘密」生成 24 个分镜', time: '昨天', read: true }
-];
-
-export const initialDrafts: Draft[] = [
-  { id: 'd1', name: '未命名剧本草稿', kind: 'script', updated: '5 分钟前', wordCount: 486, bg: 'scene-bg-1' },
-  { id: 'd2', name: '校园暗恋故事', kind: 'project', updated: '1 小时前', wordCount: 1240, bg: 'scene-bg-5' },
-  { id: 'd3', name: '反派"陆寒"人设', kind: 'character', updated: '昨天', wordCount: 320, bg: 'char-bg-6' },
-  { id: 'd4', name: '第三集大纲', kind: 'outline', updated: '2 天前', wordCount: 840, bg: 'scene-bg-3' }
-];
-
-export const initialShared: SharedProject[] = [
-  { id: 's1', name: '古风修仙记', owner: '林夕', ownerInitial: '林', ownerBg: 'from-pink-300 to-purple-400', perm: '编辑', sharedAt: '2026-05-19', bg: 'scene-bg-2' },
-  { id: 's2', name: '校园甜宠日记', owner: '江月', ownerInitial: '江', ownerBg: 'from-yellow-300 to-orange-400', perm: '查看', sharedAt: '2026-05-21', bg: 'scene-bg-5' },
-  { id: 's3', name: '霸总总裁文 V2', owner: '陈墨', ownerInitial: '陈', ownerBg: 'from-blue-300 to-indigo-400', perm: '编辑', sharedAt: '2026-05-22', bg: 'scene-bg-4' }
-];
-
-export const initialTrash: TrashItem[] = [
-  { id: 't1', name: '测试项目-旧版', kind: 'project', deletedAt: '2026-05-15', daysLeft: 23, bg: 'scene-bg-2', size: '128 MB' },
-  { id: 't2', name: '场景 6 · 雨夜', kind: 'shot', deletedAt: '2026-05-18', daysLeft: 26, bg: 'scene-bg-7', size: '4.6 MB' },
-  { id: 't3', name: '李娜 (V1)', kind: 'character', deletedAt: '2026-05-20', daysLeft: 28, bg: 'char-bg-1', size: '2.1 MB' },
-  { id: 't4', name: '霓虹酒吧·夜', kind: 'scene', deletedAt: '2026-05-21', daysLeft: 29, bg: 'scene-bg-3', size: '8.4 MB' },
-  { id: 't5', name: '背景音乐_测试', kind: 'music', deletedAt: '2026-05-22', daysLeft: 30, bg: 'char-bg-4', size: '5.2 MB' }
 ];
 
 export const initialConsistency: ConsistencyEntry[] = [

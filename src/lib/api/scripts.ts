@@ -1,4 +1,4 @@
-import { request, API_BASE_PROJECT } from './client';
+import { request } from './client';
 
 const SCRIPT_BASE = import.meta.env.VITE_PUBLIC_SCRIPT_API_BASE ?? 'http://localhost:8003';
 

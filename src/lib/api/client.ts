@@ -83,7 +83,7 @@ async function refreshAccess(): Promise<string> {
   }
 }
 
-async function rawRequest<T>(path: string, opts: Options): Promise<T> {
+async function rawRequest<T>(path: string, opts: Options): Promise<{ envelope: ApiSuccess<T> | null; rawText: string }> {
   const headers: Record<string, string> = {
     Accept: 'application/json',
     ...opts.headers,
@@ -102,7 +102,7 @@ async function rawRequest<T>(path: string, opts: Options): Promise<T> {
     signal: opts.signal,
   });
 
-  if (res.status === 204) return undefined as T;
+  if (res.status === 204) return { envelope: null, rawText: '' };
 
   const text = await res.text();
   const parsed = text ? JSON.parse(text) : null;
@@ -119,22 +119,42 @@ async function rawRequest<T>(path: string, opts: Options): Promise<T> {
     throw new ManjuError(res.status, body);
   }
 
-  return (parsed as ApiSuccess<T>).data;
+  return { envelope: parsed as ApiSuccess<T>, rawText: text };
 }
 
-export async function request<T>(path: string, opts: Options = {}): Promise<T> {
+async function withRefreshRetry<T>(opts: Options, doFetch: () => Promise<T>): Promise<T> {
   try {
-    return await rawRequest<T>(path, opts);
+    return await doFetch();
   } catch (err) {
-    // access token 失效 → 用 refresh 拿新的, 重试一次. 仅对带 auth 的请求.
     if (err instanceof ManjuError && err.status === 401 && err.code === 'INVALID_TOKEN' && opts.auth !== false) {
       try {
         await refreshAccess();
       } catch {
         throw err;
       }
-      return await rawRequest<T>(path, opts);
+      return await doFetch();
     }
     throw err;
   }
+}
+
+// request: 单对象响应. 自动剥 .data, 返回 T (204 时返回 undefined).
+export async function request<T>(path: string, opts: Options = {}): Promise<T> {
+  return withRefreshRetry(opts, async () => {
+    const { envelope } = await rawRequest<T>(path, opts);
+    if (envelope === null) return undefined as T;
+    return envelope.data;
+  });
+}
+
+// requestEnvelope: list 响应. 返回完整 {data, meta}, meta 含 page_size/has_more/next_cursor.
+// 用于 list 端点 (cursor 分页需要 meta).
+export async function requestEnvelope<T>(path: string, opts: Options = {}): Promise<ApiSuccess<T>> {
+  return withRefreshRetry(opts, async () => {
+    const { envelope } = await rawRequest<T>(path, opts);
+    if (envelope === null) {
+      throw new ManjuError(204, { code: 'INTERNAL_ERROR', message: '空响应不应给到 list 端点', request_id: '' });
+    }
+    return envelope;
+  });
 }

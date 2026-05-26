@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import * as api from '@/lib/api/assets';
-import type { AssetDTO, AssetType, ListAssetsParams, CreateAssetInput } from '@/lib/api/assets';
+import type { ListAssetsParams, CreateAssetInput } from '@/lib/api/assets';
 
 export function useAssets(params: ListAssetsParams = {}) {
   return useQuery({

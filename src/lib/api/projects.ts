@@ -1,4 +1,4 @@
-import { request, API_BASE_PROJECT } from './client';
+import { request, requestEnvelope, API_BASE_PROJECT } from './client';
 
 export type ProjectStatus = 'draft' | 'rendering' | 'done' | 'archived';
 
@@ -37,7 +37,7 @@ export interface ListProjectsParams {
 }
 
 export async function listProjects(params: ListProjectsParams = {}) {
-  const qs = buildQuery(params);
+  const qs = buildQuery({ ...params });
   return rawList<ProjectDTO>(`/v1/projects${qs}`);
 }
 
@@ -124,7 +124,8 @@ export async function emptyTrash(): Promise<{ removed: number }> {
 // ---- helpers ----
 
 async function rawList<T>(path: string): Promise<{ data: T[]; meta: ListMeta }> {
-  return request<{ data: T[]; meta: ListMeta }>(path, { base }) as unknown as { data: T[]; meta: ListMeta };
+  const env = await requestEnvelope<T[]>(path, { base });
+  return { data: env.data, meta: env.meta as unknown as ListMeta };
 }
 
 function buildQuery(params: Record<string, unknown>): string {
