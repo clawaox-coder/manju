@@ -326,12 +326,25 @@ func TestAuthRequired(t *testing.T) {
 
 func TestInvalidTypeSegment(t *testing.T) {
 	h := getH(t)
-	resp, raw := do(t, "GET", h.URL("/v1/assets/voices"), h.TeamA.OwnerToken, nil)
-	require.Equal(t, http.StatusBadRequest, resp.StatusCode, "voices 不在 enum 内: %s", raw)
-	require.Equal(t, "INVALID_INPUT", errCodeOf(t, raw))
-
-	resp, raw = do(t, "GET", h.URL("/v1/assets/garbage"), h.TeamA.OwnerToken, nil)
+	resp, raw := do(t, "GET", h.URL("/v1/assets/garbage"), h.TeamA.OwnerToken, nil)
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode, "garbage: %s", raw)
+	require.Equal(t, "INVALID_INPUT", errCodeOf(t, raw))
+}
+
+// voices URL 在 T-009 切片补回 (0002 migration 加 enum value).
+func TestVoicesType(t *testing.T) {
+	h := getH(t)
+	resp, raw := do(t, "POST", h.URL("/v1/assets/voices"), h.TeamA.OwnerToken,
+		map[string]any{"name": "旁白男声", "duration_ms": 3000})
+	require.Equal(t, http.StatusCreated, resp.StatusCode, "%s", raw)
+	d := dataOf(t, raw)
+	require.Equal(t, "voice", d["type"])
+
+	resp, raw = do(t, "GET", h.URL("/v1/assets/voices"), h.TeamA.OwnerToken, nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	items, _ := listOf(t, raw)
+	require.Len(t, items, 1)
+	require.Equal(t, "voice", items[0].(map[string]any)["type"])
 }
 
 func TestSignUploadAndPut(t *testing.T) {

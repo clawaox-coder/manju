@@ -102,7 +102,7 @@ func parseType(r *http.Request) (repo.AssetType, error) {
 	raw := chi.URLParam(r, "type")
 	t, ok := repo.ParseAssetTypeFromPath(raw)
 	if !ok {
-		return "", apperr.InvalidInput("type 不在 characters/scenes/props/music/sfx 之内").
+		return "", apperr.InvalidInput("type 不在 characters/scenes/props/music/sfx/voices 之内").
 			WithDetail("got", raw)
 	}
 	return t, nil

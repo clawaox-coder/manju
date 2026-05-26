@@ -21,7 +21,8 @@ import (
 
 // ---- 类型与枚举 ----
 
-// AssetType 与 migration 0001 中的 PG enum 同步. 5 类, 不含 voice (留给 T-009 ai-gateway).
+// AssetType 与 migration 0001+0002 中的 PG enum 同步.
+// 6 类: character/scene/prop/music/sfx/voice. voice 由 T-009 ai-gateway 切片补回.
 type AssetType string
 
 const (
@@ -30,11 +31,12 @@ const (
 	TypeProp      AssetType = "prop"
 	TypeMusic     AssetType = "music"
 	TypeSFX       AssetType = "sfx"
+	TypeVoice     AssetType = "voice"
 )
 
 func ParseAssetType(s string) (AssetType, bool) {
 	switch s {
-	case "character", "scene", "prop", "music", "sfx":
+	case "character", "scene", "prop", "music", "sfx", "voice":
 		return AssetType(s), true
 	}
 	return "", false
@@ -54,6 +56,8 @@ func ParseAssetTypeFromPath(seg string) (AssetType, bool) {
 		return TypeMusic, true
 	case "sfx":
 		return TypeSFX, true
+	case "voices":
+		return TypeVoice, true
 	}
 	return "", false
 }
