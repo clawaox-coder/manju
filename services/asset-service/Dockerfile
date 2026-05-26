@@ -1,30 +1,27 @@
 # --- build stage ---
-FROM node:22-alpine AS builder
+FROM golang:1.25-alpine AS builder
+
+ENV GOPROXY=https://goproxy.cn,direct \
+    GOSUMDB=off \
+    CGO_ENABLED=0 \
+    GOOS=linux
 
 WORKDIR /src
 
-# 装 pnpm
-RUN corepack enable && corepack prepare pnpm@11.3.0 --activate
+COPY go.mod go.sum* ./
+RUN go mod download
 
-COPY package.json ./
-RUN pnpm install --no-frozen-lockfile --prod=false --ignore-scripts
-
-COPY tsconfig*.json ./
-COPY src ./src
-RUN pnpm build
+COPY . .
+RUN go build \
+	-trimpath -ldflags '-s -w' \
+	-o /out/asset-service ./cmd/server
 
 # --- runtime stage ---
-FROM node:22-alpine
+FROM gcr.io/distroless/static-debian12:nonroot
 
 WORKDIR /app
+COPY --from=builder /out/asset-service /app/asset-service
 
-RUN corepack enable && corepack prepare pnpm@11.3.0 --activate
-
-COPY package.json ./
-RUN pnpm install --prod --no-frozen-lockfile --ignore-scripts && pnpm store prune
-
-COPY --from=builder /src/dist ./dist
-
-USER node
+USER nonroot:nonroot
 EXPOSE 8004
-ENTRYPOINT ["node", "dist/index.js"]
+ENTRYPOINT ["/app/asset-service"]
