@@ -45,6 +45,7 @@ import { fmtTime, cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import type { Shot } from '@/types';
 import { useShortcuts } from '@/hooks/useShortcuts';
+import { useCreateRender, useRenderJob } from '@/hooks/useRenderApi';
 
 function SortableShot({ shot, active, onClick }: { shot: Shot; active: boolean; onClick: () => void }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: shot.id });
@@ -117,10 +118,27 @@ export default function Video() {
   const currentTime = useStore((s) => s.currentTime);
   const setCurrentTime = useStore((s) => s.setCurrentTime);
   const [renderOpen, setRenderOpen] = useState(false);
-  const [renderProgress, setRenderProgress] = useState(0);
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [volume, setVolume] = useState(80);
   const [zoom, setZoom] = useState(30); // px per second
+
+  const createRender = useCreateRender();
+  const { data: activeJob } = useRenderJob(activeJobId ?? undefined);
+
+  // 当 job 完成时自动切到 export dialog
+  useEffect(() => {
+    if (activeJob?.status === 'done') {
+      setRenderOpen(false);
+      setExportOpen(true);
+    } else if (activeJob?.status === 'failed') {
+      setRenderOpen(false);
+      toast.error(`渲染失败: ${activeJob.error ?? '未知错误'}`);
+    }
+  }, [activeJob?.status]);
+
+  const renderProgress = activeJob?.progress ?? 0;
+  const renderStage = activeJob?.stage ?? '';
 
   const totalTime = useMemo(() => shots.reduce((s, x) => s + x.duration, 0), [shots]);
   const currentShot = shots.find((s) => s.id === currentShotId) || shots[0];
@@ -191,19 +209,25 @@ export default function Video() {
   }
 
   function startRender() {
-    setRenderProgress(0);
+    const projectId = useStore.getState().projectId;
+    if (!projectId) {
+      toast.error('请先选择一个项目');
+      return;
+    }
     setRenderOpen(true);
-    const interval = setInterval(() => {
-      setRenderProgress((p) => {
-        if (p >= 100) {
-          clearInterval(interval);
+    setActiveJobId(null);
+    createRender.mutate(
+      { input: { project_id: projectId, resolution: '1080p', format: 'mp4' } },
+      {
+        onSuccess: (data) => {
+          setActiveJobId(data.job_id);
+        },
+        onError: (err) => {
           setRenderOpen(false);
-          setExportOpen(true);
-          return 100;
-        }
-        return p + 3;
-      });
-    }, 100);
+          toast.error(`发起渲染失败: ${(err as Error).message}`);
+        },
+      },
+    );
   }
 
   return (
@@ -515,7 +539,7 @@ export default function Video() {
       </div>
 
       {/* Render dialog */}
-      <Dialog open={renderOpen} onOpenChange={setRenderOpen}>
+      <Dialog open={renderOpen} onOpenChange={(open) => { if (!open && activeJob?.status !== 'done') { setRenderOpen(false); } }}>
         <DialogContent hideClose className="max-w-md">
           <DialogHeader>
             <DialogTitle>正在渲染视频...</DialogTitle>
@@ -527,7 +551,7 @@ export default function Video() {
             <div className="text-3xl font-bold mb-3">{renderProgress}%</div>
             <Progress value={renderProgress} className="mb-3" />
             <div className="text-xs text-muted-foreground">
-              {renderProgress < 30 ? '正在合成画面...' : renderProgress < 60 ? '正在合成音频...' : renderProgress < 90 ? '正在添加字幕...' : '即将完成...'}
+              {renderStage === 'running' ? '正在准备...' : renderStage === 'composing' ? '正在合成画面...' : renderStage === 'encoding' ? '正在编码视频...' : renderStage === 'uploading' ? '正在上传...' : '排队中...'}
             </div>
           </div>
         </DialogContent>
@@ -537,18 +561,25 @@ export default function Video() {
       <Dialog open={exportOpen} onOpenChange={setExportOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>渲染完成 🎉</DialogTitle>
+            <DialogTitle>渲染完成</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
-            <div className="aspect-video rounded-xl scene-bg-hero" />
+            {activeJob?.thumbnail_url && (
+              <img src={activeJob.thumbnail_url} alt="thumbnail" className="aspect-video rounded-xl w-full object-cover" />
+            )}
+            {!activeJob?.thumbnail_url && <div className="aspect-video rounded-xl scene-bg-hero" />}
             <div className="text-xs text-muted-foreground">
-              视频大小: 24.6 MB · 时长 {fmtTime(totalTime)} · 1080P
+              {activeJob?.size_bytes ? `视频大小: ${(activeJob.size_bytes / 1024 / 1024).toFixed(1)} MB` : ''}
+              {activeJob?.duration_ms ? ` · 时长 ${(activeJob.duration_ms / 1000).toFixed(0)}s` : ''}
+              {activeJob?.resolution ? ` · ${activeJob.resolution}` : ''}
             </div>
             <div className="flex gap-2">
-              <Button className="flex-1" onClick={() => toast.success('下载已开始')}>
-                <Download className="w-4 h-4" /> 下载到本地
+              <Button className="flex-1" asChild>
+                <a href={activeJob?.result_url ?? '#'} target="_blank" rel="noopener noreferrer">
+                  <Download className="w-4 h-4" /> 下载到本地
+                </a>
               </Button>
-              <Button variant="outline" onClick={() => toast.info('已分享')}>
+              <Button variant="outline" onClick={() => { navigator.clipboard.writeText(activeJob?.result_url ?? ''); toast.success('链接已复制'); }}>
                 分享
               </Button>
             </div>

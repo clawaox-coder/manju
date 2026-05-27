@@ -31,6 +31,7 @@ import {
 
 export interface AppState {
   // Domain
+  projectId: string | null;
   projectName: string;
   shots: Shot[];
   currentShotId: number;
@@ -98,6 +99,7 @@ export const useStore = create<AppState>()(
   persist(
     (set) => ({
       // Initial domain data
+      projectId: null,
       projectName: '都市修仙之我有一个万界商城',
       shots: initialShots,
       currentShotId: 1,
