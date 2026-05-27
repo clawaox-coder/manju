@@ -1,29 +1,36 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Play, Pause, Sparkles, ChevronDown } from 'lucide-react';
+import { Play, Pause, Sparkles, Loader2 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { useAssets } from '@/hooks/useAssetApi';
 import { useStore } from '@/store';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
-const TAG_COLORS: Record<string, string> = {
-  pink: 'bg-pink-50 text-pink-600',
-  purple: 'bg-purple-50 text-purple-600',
-  indigo: 'bg-indigo-50 text-indigo-600',
-  blue: 'bg-blue-50 text-blue-600',
-  green: 'bg-green-50 text-green-600',
-  orange: 'bg-orange-50 text-orange-600',
-  gray: 'bg-gray-100 text-gray-600',
-  yellow: 'bg-yellow-50 text-yellow-700',
-  amber: 'bg-amber-50 text-amber-700'
+const TAG_COLORS: Record<number, string> = {
+  0: 'bg-pink-50 text-pink-600',
+  1: 'bg-purple-50 text-purple-600',
+  2: 'bg-indigo-50 text-indigo-600',
+  3: 'bg-blue-50 text-blue-600',
+  4: 'bg-green-50 text-green-600',
+  5: 'bg-orange-50 text-orange-600',
+  6: 'bg-gray-100 text-gray-600',
+  7: 'bg-amber-50 text-amber-700',
 };
 
+function tagColor(tag: string) {
+  let hash = 0;
+  for (let i = 0; i < tag.length; i++) hash = (hash * 31 + tag.charCodeAt(i)) | 0;
+  return TAG_COLORS[Math.abs(hash) % 8];
+}
+
 export default function Voice() {
-  const voices = useStore((s) => s.voices);
+  const { data, isLoading } = useAssets({ type: 'voice' });
   const shots = useStore((s) => s.shots);
   const [playing, setPlaying] = useState<string | null>(null);
+
+  const voices = data?.data ?? [];
 
   function toggle(key: string, name: string) {
     if (playing === key) setPlaying(null);
@@ -46,7 +53,12 @@ export default function Voice() {
         </Button>
       </div>
 
-      {/* Voice cards */}
+      {isLoading && (
+        <div className="flex justify-center py-12">
+          <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+        </div>
+      )}
+
       <div className="grid grid-cols-4 gap-4 mb-6">
         {voices.map((v, i) => (
           <motion.div
@@ -57,16 +69,22 @@ export default function Voice() {
           >
             <Card className="p-4">
               <div className="flex items-center gap-3 mb-3">
-                <div className={cn('w-12 h-12 rounded-full flex items-center justify-center text-2xl', v.bg)}>{v.icon}</div>
+                {v.thumbnail_url ? (
+                  <img src={v.thumbnail_url} alt={v.name} className="w-12 h-12 rounded-full object-cover" />
+                ) : (
+                  <div className={cn('w-12 h-12 rounded-full flex items-center justify-center text-2xl', v.bg_style ?? 'bg-gradient-to-br from-violet-100 to-purple-200')}>
+                    {v.avatar ?? v.name[0]}
+                  </div>
+                )}
                 <div>
                   <div className="font-semibold">{v.name}</div>
-                  <div className="text-xs text-muted-foreground">{v.desc}</div>
+                  <div className="text-xs text-muted-foreground line-clamp-1">{v.description}</div>
                 </div>
               </div>
               <div className="flex flex-wrap gap-1 mb-3 min-h-[20px]">
                 {v.tags.map((t) => (
-                  <span key={t.label} className={cn('px-1.5 py-0.5 rounded text-[10px]', TAG_COLORS[t.color])}>
-                    {t.label}
+                  <span key={t} className={cn('px-1.5 py-0.5 rounded text-[10px]', tagColor(t))}>
+                    {t}
                   </span>
                 ))}
               </div>
@@ -95,15 +113,6 @@ export default function Voice() {
               </div>
               <Button variant="ghost" size="icon" className="size-9" onClick={() => toggle(`s${s.id}`, `分镜 ${s.num}`)}>
                 {playing === `s${s.id}` ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-              </Button>
-              <Button variant="outline" size="sm" className="min-w-[110px] justify-between">
-                <span className="flex items-center gap-2">
-                  <Avatar className="w-5 h-5">
-                    <AvatarFallback className={cn('text-xs', voices[0].bg)}>{voices[0].icon}</AvatarFallback>
-                  </Avatar>
-                  {voices[0].name}
-                </span>
-                <ChevronDown className="w-3 h-3 text-muted-foreground" />
               </Button>
             </div>
           ))}

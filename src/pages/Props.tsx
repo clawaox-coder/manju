@@ -1,6 +1,6 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Sparkles, Upload } from 'lucide-react';
+import { Sparkles, Upload, Loader2 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
@@ -10,19 +10,21 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger
 } from '@/components/ui/context-menu';
-import { useStore } from '@/store';
+import { useAssets, useDeleteAsset } from '@/hooks/useAssetApi';
 import { useConfirm } from '@/hooks/useConfirm';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
 export default function Props() {
-  const props = useStore((s) => s.props);
-  const propFilter = useStore((s) => s.propFilter);
-  const setPropFilter = useStore((s) => s.setPropFilter);
+  const { data, isLoading } = useAssets({ type: 'prop' });
+  const deleteAsset = useDeleteAsset();
   const confirm = useConfirm();
+  const [propFilter, setPropFilter] = useState('全部');
 
-  const cats = useMemo(() => ['全部', ...new Set(props.map((p) => p.cat))], [props]);
-  const filtered = useMemo(() => (propFilter === '全部' ? props : props.filter((p) => p.cat === propFilter)), [props, propFilter]);
+  const props = data?.data ?? [];
+
+  const cats = useMemo(() => ['全部', ...new Set(props.flatMap((p) => p.tags))], [props]);
+  const filtered = useMemo(() => (propFilter === '全部' ? props : props.filter((p) => p.tags.includes(propFilter))), [props, propFilter]);
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
@@ -64,18 +66,24 @@ export default function Props() {
                 whileHover={{ y: -4 }}
               >
                 <Card className="p-3 cursor-pointer hover:shadow-lg transition" onClick={() => toast.success(`已将「${p.name}」应用到场景`)}>
-                  <div className={cn('aspect-square rounded-lg mb-3 flex items-center justify-center text-5xl', p.bg)}>{p.icon}</div>
+                  {p.thumbnail_url ? (
+                    <img src={p.thumbnail_url} alt={p.name} className="aspect-square rounded-lg mb-3 object-cover w-full" />
+                  ) : (
+                    <div className={cn('aspect-square rounded-lg mb-3 flex items-center justify-center text-5xl', p.bg_style ?? 'bg-gradient-to-br from-amber-50 to-orange-100')}>
+                      {p.avatar ?? p.name[0]}
+                    </div>
+                  )}
                   <div className="font-semibold text-sm truncate">{p.name}</div>
                   <div className="flex items-center justify-between text-[10px] text-muted-foreground mt-1">
-                    <span>{p.cat}</span>
-                    <span>用 {p.uses}</span>
+                    <span>{p.tags[0] ?? ''}</span>
+                    <span>用 {p.uses_count}</span>
                   </div>
                 </Card>
               </motion.div>
             </ContextMenuTrigger>
             <ContextMenuContent>
               <ContextMenuItem onClick={() => toast.success(`已应用「${p.name}」`)}>应用到场景</ContextMenuItem>
-              <ContextMenuItem onClick={() => toast.info(`「${p.name}」用于 ${p.uses} 个镜头`)}>查看使用情况</ContextMenuItem>
+              <ContextMenuItem onClick={() => toast.info(`「${p.name}」使用 ${p.uses_count} 次`)}>查看使用情况</ContextMenuItem>
               <ContextMenuItem onClick={() => toast.success('已下载')}>下载</ContextMenuItem>
               <ContextMenuSeparator />
               <ContextMenuItem
@@ -86,7 +94,7 @@ export default function Props() {
                     message: `确定删除「${p.name}」?`,
                     okText: '删除',
                     danger: true,
-                    onConfirm: () => toast.info('已删除')
+                    onConfirm: () => deleteAsset.mutate(p.id),
                   })
                 }
               >

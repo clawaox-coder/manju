@@ -1,33 +1,40 @@
-import { Play, Pause, Upload } from 'lucide-react';
+import { Play, Pause, Upload, Loader2 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { useStore } from '@/store';
+import { useAssets } from '@/hooks/useAssetApi';
 import { toast } from 'sonner';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { cn } from '@/lib/utils';
 
 export default function Sfx() {
-  const sfx = useStore((s) => s.sfx);
-  const playingId = useStore((s) => s.playingSfxId);
-  const setPlaying = useStore((s) => s.setPlayingSfx);
+  const { data, isLoading } = useAssets({ type: 'sfx' });
+  const [playingId, setPlayingId] = useState<string | null>(null);
   const [cat, setCat] = useState('全部');
+
+  const sfx = data?.data ?? [];
 
   useEffect(() => {
     if (playingId == null) return;
-    const t = setTimeout(() => setPlaying(null), 2000);
+    const t = setTimeout(() => setPlayingId(null), 2000);
     return () => clearTimeout(t);
-  }, [playingId, setPlaying]);
+  }, [playingId]);
 
-  const cats = ['全部', ...Array.from(new Set(sfx.map((s) => s.cat)))];
-  const filtered = cat === '全部' ? sfx : sfx.filter((s) => s.cat === cat);
+  const cats = useMemo(() => ['全部', ...new Set(sfx.flatMap((s) => s.tags))], [sfx]);
+  const filtered = cat === '全部' ? sfx : sfx.filter((s) => s.tags.includes(cat));
 
-  function toggle(id: number, name: string) {
-    if (playingId === id) setPlaying(null);
+  function toggle(id: string, name: string) {
+    if (playingId === id) setPlayingId(null);
     else {
-      setPlaying(id);
+      setPlayingId(id);
       toast.info(`试听: ${name}`);
     }
+  }
+
+  function fmtDuration(ms: number | null) {
+    if (!ms) return '--';
+    const s = Math.round(ms / 1000);
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
   }
 
   return (
@@ -54,23 +61,28 @@ export default function Sfx() {
         ))}
       </Card>
 
+      {isLoading && (
+        <div className="flex justify-center py-12">
+          <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+        </div>
+      )}
+
       <Card className="overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-muted text-xs text-muted-foreground">
             <tr>
               <th className="px-5 py-3 text-left font-medium w-12">#</th>
               <th className="px-5 py-3 text-left font-medium">音效</th>
-              <th className="px-5 py-3 text-left font-medium">分类</th>
-              <th className="px-5 py-3 text-left font-medium">情绪</th>
+              <th className="px-5 py-3 text-left font-medium">标签</th>
               <th className="px-5 py-3 text-left font-medium">时长</th>
               <th className="px-5 py-3 text-left font-medium">波形</th>
               <th className="px-5 py-3 text-right font-medium">操作</th>
             </tr>
           </thead>
           <tbody>
-            {filtered.map((s) => (
+            {filtered.map((s, idx) => (
               <tr key={s.id} className={cn('border-t border-border/50 hover:bg-accent/50', playingId === s.id && 'bg-brand-50/30')}>
-                <td className="px-5 py-3 text-muted-foreground text-xs">{String(s.id).padStart(2, '0')}</td>
+                <td className="px-5 py-3 text-muted-foreground text-xs">{String(idx + 1).padStart(2, '0')}</td>
                 <td className="px-5 py-3">
                   <div className="flex items-center gap-3">
                     <Button
@@ -84,11 +96,10 @@ export default function Sfx() {
                     <span className="text-sm font-medium">{s.name}</span>
                   </div>
                 </td>
-                <td className="px-5 py-3 text-xs text-muted-foreground">{s.cat}</td>
                 <td className="px-5 py-3">
-                  <Badge variant="default">{s.mood}</Badge>
+                  {s.tags[0] && <Badge variant="default">{s.tags[0]}</Badge>}
                 </td>
-                <td className="px-5 py-3 text-xs text-muted-foreground">{s.dur}</td>
+                <td className="px-5 py-3 text-xs text-muted-foreground">{fmtDuration(s.duration_ms)}</td>
                 <td className="px-5 py-3">
                   <div className="h-6 w-32 audio-wave rounded" />
                 </td>
