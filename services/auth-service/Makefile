@@ -8,7 +8,8 @@ ATLAS ?= atlas
 SQLC ?= sqlc
 
 # 本地 DSN (与 scripts/dev/docker-compose.yml 对齐)
-DATABASE_URL ?= postgres://manju:manju@localhost:5432/manju?sslmode=disable
+DATABASE_URL ?= postgres://manju_app:manju_app@localhost:5432/manju?sslmode=disable
+MIGRATE_DATABASE_URL ?= postgres://manju:manju@localhost:5432/manju?sslmode=disable
 REDIS_URL ?= redis://localhost:6379/0
 
 help: ## 显示所有 target
@@ -30,10 +31,10 @@ test-integration: ## 集成测试 (testcontainers 起 pg+redis)
 	$(GO) test -race -count=1 -timeout 5m ./tests/integration/...
 
 migrate: ## 应用迁移到本地 pg (需要 atlas binary)
-	$(ATLAS) migrate apply --env local
+	DATABASE_URL=$(MIGRATE_DATABASE_URL) $(ATLAS) migrate apply --env local
 
 migrate-hash: ## 锁迁移目录 (写新迁移后必跑)
-	$(ATLAS) migrate hash --env local
+	DATABASE_URL=$(MIGRATE_DATABASE_URL) $(ATLAS) migrate hash --env local
 
 sqlc: ## 从 queries/*.sql + migrations/*.sql 生成 Go
 	$(SQLC) generate

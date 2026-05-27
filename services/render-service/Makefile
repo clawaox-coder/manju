@@ -7,7 +7,8 @@ GO ?= go
 ATLAS ?= atlas
 SQLC ?= sqlc
 
-DATABASE_URL ?= postgres://manju:manju@localhost:5432/manju?sslmode=disable
+DATABASE_URL ?= postgres://manju_app:manju_app@localhost:5432/manju?sslmode=disable
+MIGRATE_DATABASE_URL ?= postgres://manju:manju@localhost:5432/manju?sslmode=disable
 
 help: ## 显示所有 target
 	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z_-]+:.*##/ {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -52,10 +53,10 @@ test-integration: ## 集成测试 (testcontainers 起 pg + minio + kafka)
 	$(GO) test -race -count=1 -timeout 10m ./tests/integration/...
 
 migrate: ## 应用迁移到本地 pg (需 atlas binary)
-	$(ATLAS) migrate apply --env local
+	DATABASE_URL=$(MIGRATE_DATABASE_URL) $(ATLAS) migrate apply --env local
 
 migrate-hash: ## 锁迁移目录 (写新迁移后必跑)
-	$(ATLAS) migrate hash --env local
+	DATABASE_URL=$(MIGRATE_DATABASE_URL) $(ATLAS) migrate hash --env local
 
 sqlc: ## 从 queries/*.sql + migrations/*.sql 生成 Go
 	$(SQLC) generate

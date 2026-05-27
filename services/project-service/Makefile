@@ -2,7 +2,8 @@
 # 假设已安装: node 22+, pnpm, docker, atlas
 
 ATLAS ?= atlas
-DATABASE_URL ?= postgres://manju:manju@localhost:5432/manju?sslmode=disable
+DATABASE_URL ?= postgres://manju_app:manju_app@localhost:5432/manju?sslmode=disable
+MIGRATE_DATABASE_URL ?= postgres://manju:manju@localhost:5432/manju?sslmode=disable
 REDIS_URL ?= redis://localhost:6379/1
 
 .PHONY: help dev build start test test-integration typecheck migrate lint docker-build clean
@@ -35,7 +36,7 @@ typecheck: ## 类型检查
 	pnpm typecheck
 
 migrate: ## 应用迁移到本地 pg (需要 atlas)
-	DATABASE_URL=$(DATABASE_URL) $(ATLAS) migrate apply --env local
+	DATABASE_URL=$(DATABASE_URL) DATABASE_URL=$(MIGRATE_DATABASE_URL) $(ATLAS) migrate apply --env local
 
 lint: ## lint
 	pnpm exec tsc --noEmit

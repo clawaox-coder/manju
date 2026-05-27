@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     http_port: int = 8005
     jwt_public_key_path: str = "/run/secrets/jwt-public.pem"
     jwt_issuer: str = "manju-auth"
-    database_url: str = "postgres://manju:manju@localhost:5432/manju?sslmode=disable"
+    database_url: str = "postgres://manju_app:manju_app@localhost:5432/manju?sslmode=disable"
     anthropic_api_key: str = "sk-placeholder"
     # OAuth 风格 token + 自定义 endpoint. 用于复用 Claude Code / 中转网关凭据.
     # 留空表示走默认 (api_key + api.anthropic.com).
