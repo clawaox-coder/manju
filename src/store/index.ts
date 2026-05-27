@@ -67,6 +67,7 @@ export interface AppState {
   playingSfxId: number | null;
 
   // Actions
+  setProjectId: (id: string | null) => void;
   setProjectName: (name: string) => void;
   setCurrentShot: (id: number) => void;
   setIsPlaying: (playing: boolean) => void;
@@ -143,6 +144,7 @@ export const useStore = create<AppState>()(
       playingSfxId: null,
 
       // Actions
+      setProjectId: (id) => set({ projectId: id }),
       setProjectName: (name) => set({ projectName: name }),
       setCurrentShot: (id) => set({ currentShotId: id }),
       setIsPlaying: (playing) => set({ isPlaying: playing }),

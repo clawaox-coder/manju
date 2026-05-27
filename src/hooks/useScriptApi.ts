@@ -51,3 +51,11 @@ export function useDeleteShot(projectId: string) {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['shots', projectId] }); },
   });
 }
+
+export function useReorderShots(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (order: string[]) => api.reorderShots(projectId, order),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['shots', projectId] }); },
+  });
+}

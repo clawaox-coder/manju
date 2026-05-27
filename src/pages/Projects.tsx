@@ -35,6 +35,8 @@ type SortKey = 'updated' | 'name' | 'progress';
 export default function Projects() {
   const navigate = useNavigate();
   const confirm = useConfirm();
+  const setProjectId = useStore((s) => s.setProjectId);
+  const setProjectName = useStore((s) => s.setProjectName);
 
   const [view, setView] = useState<'grid' | 'list'>('grid');
   const [status, setStatus] = useState<StatusFilter>('all');
@@ -63,7 +65,11 @@ export default function Projects() {
   }, [projects, genre, sortBy]);
 
   function handleAction(p: Project, action: 'open' | 'rename' | 'duplicate' | 'delete' | 'export') {
-    if (action === 'open') navigate(`/video?project=${p.id}`);
+    if (action === 'open') {
+      setProjectId(p.id);
+      setProjectName(p.name);
+      navigate('/script');
+    }
     else if (action === 'rename') toast.info(`重命名「${p.name}」`);
     else if (action === 'duplicate') {
       dupMut.mutate(p.id, { onSuccess: () => toast.success(`已复制「${p.name}」`) });
@@ -182,7 +188,7 @@ export default function Projects() {
       ) : view === 'grid' ? (
         <motion.div layout className="grid grid-cols-4 gap-4">
           {filtered.map((p) => (
-            <ProjectCard key={p.id} project={p} onClick={() => navigate(`/video?project=${p.id}`)} onAction={(a) => handleAction(p, a)} />
+            <ProjectCard key={p.id} project={p} onClick={() => handleAction(p, 'open')} onAction={(a) => handleAction(p, a)} />
           ))}
         </motion.div>
       ) : (
@@ -201,7 +207,7 @@ export default function Projects() {
             </thead>
             <tbody>
               {filtered.map((p) => (
-                <tr key={p.id} className="border-t border-border/50 hover:bg-accent/50 cursor-pointer" onClick={() => navigate(`/video?project=${p.id}`)}>
+                <tr key={p.id} className="border-t border-border/50 hover:bg-accent/50 cursor-pointer" onClick={() => handleAction(p, 'open')}>
                   <td className="px-5 py-3">
                     <div className="flex items-center gap-3">
                       <div className={cn('w-10 h-10 rounded-lg flex-shrink-0', p.bgStyle || 'bg-muted')} />

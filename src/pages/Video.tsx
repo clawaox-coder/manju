@@ -46,6 +46,7 @@ import { toast } from 'sonner';
 import type { Shot } from '@/types';
 import { useShortcuts } from '@/hooks/useShortcuts';
 import { useCreateRender, useRenderJob } from '@/hooks/useRenderApi';
+import { useShots, useReorderShots } from '@/hooks/useScriptApi';
 
 function SortableShot({ shot, active, onClick }: { shot: Shot; active: boolean; onClick: () => void }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: shot.id });
@@ -108,7 +109,11 @@ function TimelineShot({ shot, active, offset, scale, onClick }: { shot: Shot; ac
 
 export default function Video() {
   const navigate = useNavigate();
+  const projectId = useStore((s) => s.projectId);
   const projectName = useStore((s) => s.projectName);
+  const { data: apiShots } = useShots(projectId ?? undefined);
+  const reorderShots = useReorderShots(projectId ?? '');
+
   const shotsState = useStore((s) => s.shots);
   const [shots, setShots] = useState(shotsState);
   const currentShotId = useStore((s) => s.currentShotId);
@@ -204,7 +209,11 @@ export default function Video() {
       const newIndex = shots.findIndex((s) => s.id === e.over!.id);
       const next = arrayMove(shots, oldIndex, newIndex);
       setShots(next);
-      toast.success('镜头顺序已更新');
+      // 同步到 API
+      if (projectId) {
+        const order = next.map((s) => String(s.id));
+        reorderShots.mutate(order);
+      }
     }
   }
 
