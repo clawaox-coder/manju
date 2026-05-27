@@ -1,42 +1,21 @@
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Sparkles, Send, Save, FileText, Wand2, ArrowRight, MessageSquare } from 'lucide-react';
+import { Sparkles, Send, Save, FileText, Wand2, ArrowRight, MessageSquare, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useStore } from '@/store';
+import { useScript, useUpdateScript } from '@/hooks/useScriptApi';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
-const SAMPLE_SCRIPT = `# 都市修仙之我有一个万界商城
+const SAMPLE_SCRIPT = `# 新剧本
 
-## 第一集 · 觉醒
+在这里开始创作你的剧本...
 
-【场景 1】颁奖典礼现场 · 内 · 夜
-[聚光灯下, 一位身穿白色礼服的年轻女子走上舞台。]
+【场景 1】
 
-主持人: 恭喜林夕, 获得本届最佳新人奖!
-
-[全场掌声雷动。林夕接过奖杯, 目光坚定。]
-
-林夕: (颤抖着) 这一刻, 我等了三年...
-
-【场景 2】后台 · 内 · 夜
-[特写: 林夕的眼眶湿润, 一滴泪滑落。]
-
-林夕: (内心独白) 妈, 我做到了...
-
-【场景 3】化妆间 · 内 · 夜
-[镜子前, 林夕拨通了视频电话。]
-
-林夕: 妈, 我得奖了!
-
-奶奶: (在画面那头) 好孩子, 奶奶就知道你是最棒的。
-
-【场景 4】记者采访区 · 内 · 夜
-记者: 林夕小姐, 请问下一步的计划是?
-
-林夕: (微笑) 我希望能拍一部关于普通人的电影。`;
+`;
 
 const AI_QUICK_ACTIONS = [
   { label: '续写下一场', prompt: '续写下一场剧情' },
@@ -52,13 +31,72 @@ interface ChatMsg {
 
 export default function Script() {
   const navigate = useNavigate();
+  const projectId = useStore((s) => s.projectId);
   const projectName = useStore((s) => s.projectName);
+
+  const { data: scriptData, isLoading } = useScript(projectId ?? undefined);
+  const updateScript = useUpdateScript(projectId ?? '');
+
   const [script, setScript] = useState(SAMPLE_SCRIPT);
+  const [versionNo, setVersionNo] = useState(0);
+  const [dirty, setDirty] = useState(false);
   const [askInput, setAskInput] = useState('');
   const [chat, setChat] = useState<ChatMsg[]>([
     { role: 'ai', text: '你好! 我是 AI 创作助手, 可以帮你续写剧本、生成对白、提取分镜。试试左侧的快速操作?' }
   ]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // 从 API 加载脚本内容
+  useEffect(() => {
+    if (scriptData) {
+      setScript(scriptData.content || SAMPLE_SCRIPT);
+      setVersionNo(scriptData.version_no);
+      setDirty(false);
+    }
+  }, [scriptData]);
+
+  // debounced auto-save (3s after last edit)
+  const scheduleSave = useCallback(() => {
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      if (!projectId || !dirty) return;
+      updateScript.mutate(
+        { content: script, expected_version_no: versionNo },
+        {
+          onSuccess: (data) => {
+            setVersionNo(data.version_no);
+            setDirty(false);
+          },
+        },
+      );
+    }, 3000);
+  }, [projectId, dirty, script, versionNo, updateScript]);
+
+  function handleChange(value: string) {
+    setScript(value);
+    setDirty(true);
+    scheduleSave();
+  }
+
+  function manualSave() {
+    if (!projectId) {
+      toast.error('请先选择一个项目');
+      return;
+    }
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    updateScript.mutate(
+      { content: script, expected_version_no: versionNo },
+      {
+        onSuccess: (data) => {
+          setVersionNo(data.version_no);
+          setDirty(false);
+          toast.success('已保存');
+        },
+        onError: (err) => toast.error(`保存失败: ${(err as Error).message}`),
+      },
+    );
+  }
 
   const wordCount = useMemo(() => script.replace(/\s/g, '').length, [script]);
   const sceneCount = useMemo(() => (script.match(/【场景/g) || []).length, [script]);
@@ -109,11 +147,11 @@ ${prompt.includes('续写') ? '【场景 5】城市夜景 · 外 · 夜\n[镜头
             {projectName} ›
           </button>
           <h1 className="text-base font-semibold">剧本创作</h1>
-          <Badge variant="success">自动保存 · 1 分钟前</Badge>
+          <Badge variant="success">{dirty ? '未保存' : isLoading ? '加载中...' : '自动保存'}</Badge>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => toast.success('已保存草稿')}>
-            <Save className="w-3.5 h-3.5" /> 保存草稿
+          <Button variant="outline" size="sm" onClick={manualSave} disabled={updateScript.isPending}>
+            <Save className="w-3.5 h-3.5" /> {dirty ? '保存*' : '已保存'}
           </Button>
           <Button size="sm" onClick={autoGenerate}>
             <ArrowRight className="w-3.5 h-3.5" /> 下一步: 生成分镜
@@ -156,7 +194,7 @@ ${prompt.includes('续写') ? '【场景 5】城市夜景 · 外 · 夜\n[镜头
           <textarea
             ref={textareaRef}
             value={script}
-            onChange={(e) => setScript(e.target.value)}
+            onChange={(e) => handleChange(e.target.value)}
             className="flex-1 px-12 py-8 text-sm font-mono leading-relaxed bg-card outline-none resize-none"
             spellCheck={false}
           />
