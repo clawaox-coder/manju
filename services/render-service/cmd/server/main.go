@@ -63,6 +63,23 @@ func main() {
 	producer := rkafka.NewProducer(cfg.KafkaBrokers, cfg.KafkaTopicRequested)
 	defer func() { _ = producer.Close() }()
 
+	// 启动时显式建 topic (16 partition), 避 broker auto-create 元数据传播延迟造
+	// 成首发 POST 撞 "Unknown Topic Or Partition". 失败 warn 不阻塞启动 — kafka
+	// 暂不可用时 service 仍能接 GET/LIST/DELETE 请求, POST 会在 enqueue 时返
+	// UPSTREAM_FAILED, 而非 startup crash.
+	{
+		topicCtx, topicCancel := context.WithTimeout(ctx, 10*time.Second)
+		if err := rkafka.EnsureTopic(topicCtx, cfg.KafkaBrokers, cfg.KafkaTopicRequested, 16, 1); err != nil {
+			log.Warn().Err(err).
+				Str("topic", cfg.KafkaTopicRequested).
+				Strs("brokers", cfg.KafkaBrokers).
+				Msg("ensure topic failed (will rely on auto-create or first POST)")
+		} else {
+			log.Info().Str("topic", cfg.KafkaTopicRequested).Msg("kafka topic ensured")
+		}
+		topicCancel()
+	}
+
 	svcJ := service.New(repoJ, pool, producer)
 	h := &handler.Jobs{Svc: svcJ}
 

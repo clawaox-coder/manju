@@ -13,6 +13,7 @@ import (
 
 	"github.com/manju-org/manju/services/render-service/internal/config"
 	"github.com/manju-org/manju/services/render-service/internal/ffmpeg"
+	rkafka "github.com/manju-org/manju/services/render-service/internal/kafka"
 	"github.com/manju-org/manju/services/render-service/internal/logger"
 	"github.com/manju-org/manju/services/render-service/internal/repo"
 	"github.com/manju-org/manju/services/render-service/internal/s3util"
@@ -46,11 +47,12 @@ func main() {
 	}
 
 	s3c, err := s3util.New(ctx, s3util.Config{
-		Endpoint:  cfg.S3Endpoint,
-		AccessKey: cfg.S3AccessKey,
-		SecretKey: cfg.S3SecretKey,
-		Bucket:    cfg.S3Bucket,
-		Region:    cfg.S3Region,
+		Endpoint:        cfg.S3Endpoint,
+		PresignEndpoint: cfg.S3PresignEndpoint,
+		AccessKey:       cfg.S3AccessKey,
+		SecretKey:       cfg.S3SecretKey,
+		Bucket:          cfg.S3Bucket,
+		Region:          cfg.S3Region,
 	})
 	if err != nil {
 		log.Fatal().Err(err).Msg("s3 init")
@@ -62,12 +64,17 @@ func main() {
 	repoJ := repo.New(pool)
 	renderer := ffmpeg.New(cfg.FfmpegBin)
 
+	// kafka writer 用于 fail 后 re-enqueue (重试)
+	retryProducer := rkafka.NewProducer(cfg.KafkaBrokers, cfg.KafkaTopicRequested)
+	defer func() { _ = retryProducer.Close() }()
+
 	w := worker.New(worker.Deps{
 		Log:      log,
 		Repo:     repoJ,
 		S3:       s3c,
 		Renderer: renderer,
 		Cfg:      cfg,
+		Enqueuer: &workerEnqueuer{p: retryProducer},
 	})
 
 	if err := w.Run(ctx); err != nil {
@@ -75,4 +82,13 @@ func main() {
 		os.Exit(1)
 	}
 	log.Info().Msg("bye")
+}
+
+// workerEnqueuer 适配 rkafka.Producer → worker.Enqueuer 接口.
+type workerEnqueuer struct {
+	p *rkafka.Producer
+}
+
+func (e *workerEnqueuer) Enqueue(ctx context.Context, key string, value []byte) error {
+	return e.p.EnqueueRaw(ctx, key, value)
 }

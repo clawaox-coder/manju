@@ -27,16 +27,21 @@ const defaultExpires = 5 * time.Minute
 
 type Config struct {
 	Endpoint  string // http://minio:9000 / https://s3.cn-north-1.amazonaws.com.cn
-	AccessKey string
-	SecretKey string
-	Bucket    string
-	Region    string
+	// PresignEndpoint 留空时回退用 Endpoint. 用于 dev: worker 在 docker network
+	// 内 PUT 走 internal Endpoint (http://minio:9000), 但生成的 presign GET URL
+	// 需要 host 浏览器可达, 用 PresignEndpoint (http://localhost:9000).
+	// prod: 通常 internal/external 是同一个 https endpoint, 留空即可.
+	PresignEndpoint string
+	AccessKey       string
+	SecretKey       string
+	Bucket          string
+	Region          string
 }
 
 type Client struct {
 	cfg     Config
-	api     *s3.Client
-	presign *s3.PresignClient
+	api     *s3.Client // internal endpoint, 跑 PutObject/HeadBucket 等
+	presign *s3.PresignClient // presign endpoint, 生成给前端的 URL
 }
 
 func New(ctx context.Context, c Config) (*Client, error) {
@@ -53,7 +58,17 @@ func New(ctx context.Context, c Config) (*Client, error) {
 		o.BaseEndpoint = aws.String(c.Endpoint)
 		o.UsePathStyle = true // MinIO 必需
 	})
-	presign := s3.NewPresignClient(api)
+
+	// presign client: 同凭据但 BaseEndpoint 是 PresignEndpoint
+	presignBase := c.PresignEndpoint
+	if presignBase == "" {
+		presignBase = c.Endpoint
+	}
+	presignAPI := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
+		o.BaseEndpoint = aws.String(presignBase)
+		o.UsePathStyle = true
+	})
+	presign := s3.NewPresignClient(presignAPI)
 
 	return &Client{cfg: c, api: api, presign: presign}, nil
 }
@@ -124,7 +139,8 @@ func (c *Client) PresignPut(ctx context.Context, in SignInput) (*SignResult, err
 	}
 
 	// file_url: 上传完成后访问用. MinIO 与 S3 path-style 都形如 <endpoint>/<bucket>/<key>.
-	fileURL := c.cfg.Endpoint + "/" + c.cfg.Bucket + "/" + key
+	// 走 presign endpoint (前端可达), 不走 internal endpoint.
+	fileURL := c.publicHost() + "/" + c.cfg.Bucket + "/" + key
 
 	return &SignResult{
 		UploadURL: req.URL,
@@ -161,7 +177,15 @@ func (c *Client) PutFile(ctx context.Context, key, localPath, contentType string
 	if err != nil {
 		return 0, "", err
 	}
-	return st.Size(), c.cfg.Endpoint + "/" + c.cfg.Bucket + "/" + key, nil
+	return st.Size(), c.publicHost() + "/" + c.cfg.Bucket + "/" + key, nil
+}
+
+// publicHost 返 presign / 公开访问的 base URL. 留空 PresignEndpoint 时回退 Endpoint.
+func (c *Client) publicHost() string {
+	if c.cfg.PresignEndpoint != "" {
+		return c.cfg.PresignEndpoint
+	}
+	return c.cfg.Endpoint
 }
 
 // PresignGet 生成 GET 预签 URL, 供前端下载私有 bucket 内的 mp4 / thumbnail.

@@ -19,11 +19,15 @@ type Config struct {
 	JWTPublicKeyPath string
 	JWTIssuer        string
 
-	S3Endpoint  string // http://minio:9000 (local) | https://s3.cn-north-1.amazonaws.com.cn (prod)
-	S3AccessKey string
-	S3SecretKey string
-	S3Bucket    string
-	S3Region    string
+	S3Endpoint        string // http://minio:9000 (local) | https://s3.cn-north-1.amazonaws.com.cn (prod)
+	// S3PresignEndpoint: dev worker 在 docker network 跑, S3Endpoint=http://minio:9000
+	// 但生成的 presign URL 需要 host 浏览器可达, 这里给 http://localhost:9000.
+	// 留空回退用 S3Endpoint. prod 通常 internal/external 同 endpoint, 留空即可.
+	S3PresignEndpoint string
+	S3AccessKey       string
+	S3SecretKey       string
+	S3Bucket          string
+	S3Region          string
 
 	KafkaBrokers       []string // host:port,host:port
 	KafkaTopicRequested string  // render.requested
@@ -45,6 +49,7 @@ func FromEnv() (Config, error) {
 		JWTPublicKeyPath:    os.Getenv("JWT_PUBLIC_KEY_PATH"),
 		JWTIssuer:           getenv("JWT_ISSUER", "manju-auth"),
 		S3Endpoint:          os.Getenv("S3_ENDPOINT"),
+		S3PresignEndpoint:   os.Getenv("S3_PRESIGN_ENDPOINT"),
 		S3AccessKey:         os.Getenv("S3_ACCESS_KEY"),
 		S3SecretKey:         os.Getenv("S3_SECRET_KEY"),
 		S3Bucket:            getenv("S3_BUCKET", "manju-renders"),
