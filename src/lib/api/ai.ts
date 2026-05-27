@@ -1,6 +1,9 @@
 import { getAccessToken } from './tokens';
+import { request } from './client';
 
 const AI_BASE = import.meta.env.VITE_PUBLIC_AI_API_BASE ?? 'http://localhost:8005';
+
+// ---- SSE streaming (script continue) ----
 
 export interface ScriptContinueInput {
   project_id: string;
@@ -59,4 +62,49 @@ export async function streamScriptContinue(
       }
     }
   }
+}
+
+// ---- Storyboard generate (background task) ----
+
+export interface StoryboardGenerateInput {
+  project_id: string;
+  style?: string;
+  shot_ids?: string[];
+  regenerate_all?: boolean;
+}
+
+export interface AiTaskResponse {
+  task_id: string;
+  status: string;
+}
+
+export async function storyboardGenerate(input: StoryboardGenerateInput): Promise<AiTaskResponse> {
+  return request<AiTaskResponse>('/v1/ai/storyboard/generate', {
+    method: 'POST',
+    body: input,
+    base: AI_BASE,
+  });
+}
+
+// ---- Task status polling ----
+
+export interface AiTask {
+  id: string;
+  team_id: string;
+  user_id: string;
+  project_id: string | null;
+  task_type: string;
+  status: string;
+  provider: string;
+  model: string;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  result: Record<string, unknown> | null;
+  error: string | null;
+  created_at: string;
+  finished_at: string | null;
+}
+
+export async function getAiTask(taskId: string): Promise<AiTask> {
+  return request<AiTask>(`/v1/ai/tasks/${taskId}`, { base: AI_BASE });
 }
