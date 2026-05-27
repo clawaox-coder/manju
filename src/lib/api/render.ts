@@ -106,7 +106,7 @@ export async function listRenders(
   if (params.page_size) qs.set('page_size', String(params.page_size));
   if (params.cursor) qs.set('cursor', params.cursor);
   const q = qs.toString();
-  return requestEnvelope<RenderJob[]>(`/v1/render${q ? '?' + q : ''}`, opts) as any;
+  return requestEnvelope<RenderJob[]>(`/v1/render${q ? '?' + q : ''}`, opts) as Promise<ApiSuccess<RenderJob[]> & { meta: ListRenderMeta }>;
 }
 
 export async function cancelRender(id: string): Promise<void> {

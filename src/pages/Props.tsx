@@ -55,6 +55,12 @@ export default function Props() {
         ))}
       </Card>
 
+      {isLoading && (
+        <div className="flex justify-center py-12">
+          <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+        </div>
+      )}
+
       <motion.div layout className="grid grid-cols-6 gap-4">
         {filtered.map((p, i) => (
           <ContextMenu key={p.id}>

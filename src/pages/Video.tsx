@@ -114,7 +114,7 @@ export default function Video() {
   const { data: apiShots } = useShots(projectId ?? undefined);
   const reorderShots = useReorderShots(projectId ?? '');
 
-  const shotsState = useStore((s) => s.shots);
+  const shotsState = apiShots ?? useStore.getState().shots;
   const [shots, setShots] = useState(shotsState);
   const currentShotId = useStore((s) => s.currentShotId);
   const setCurrentShot = useStore((s) => s.setCurrentShot);
@@ -122,6 +122,11 @@ export default function Video() {
   const setIsPlaying = useStore((s) => s.setIsPlaying);
   const currentTime = useStore((s) => s.currentTime);
   const setCurrentTime = useStore((s) => s.setCurrentTime);
+
+  // 当 API shots 更新时同步本地
+  useEffect(() => {
+    if (apiShots) setShots(apiShots); // eslint-disable-line react-hooks/set-state-in-effect
+  }, [apiShots]);
   const [renderOpen, setRenderOpen] = useState(false);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
@@ -134,10 +139,10 @@ export default function Video() {
   // 当 job 完成时自动切到 export dialog
   useEffect(() => {
     if (activeJob?.status === 'done') {
-      setRenderOpen(false);
-      setExportOpen(true);
+      setRenderOpen(false); // eslint-disable-line react-hooks/set-state-in-effect
+      setExportOpen(true); // eslint-disable-line react-hooks/set-state-in-effect
     } else if (activeJob?.status === 'failed') {
-      setRenderOpen(false);
+      setRenderOpen(false); // eslint-disable-line react-hooks/set-state-in-effect
       toast.error(`渲染失败: ${activeJob.error ?? '未知错误'}`);
     }
   }, [activeJob?.status]);
@@ -149,9 +154,6 @@ export default function Video() {
   const currentShot = shots.find((s) => s.id === currentShotId) || shots[0];
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
-
-  // Sync local state with store
-  useEffect(() => setShots(shotsState), [shotsState]);
 
   // Tick playback
   useEffect(() => {
@@ -432,7 +434,7 @@ export default function Video() {
                     style={{ width: s.duration * zoom }}
                     className="h-full bg-blue-50 border border-blue-200 rounded flex items-center px-2 text-[10px] truncate text-blue-700 mr-0.5"
                   >
-                    {s.dialog.replace(/[\[\(].*?[\]\)]/g, '').trim().slice(0, 20)}
+                    {s.dialog.replace(/[[(].*?[\])]/g, '').trim().slice(0, 20)}
                   </div>
                 ))}
               </div>

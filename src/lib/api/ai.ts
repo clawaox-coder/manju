@@ -58,7 +58,7 @@ export async function streamScriptContinue(
         try {
           const data = JSON.parse(raw);
           onEvent({ event: currentEvent as SSEEvent['event'], data });
-        } catch {}
+        } catch { /* malformed SSE line, skip */ }
       }
     }
   }
