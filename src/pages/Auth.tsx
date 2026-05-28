@@ -41,8 +41,8 @@ export default function AuthPage() {
         toast.success('注册成功');
       }
       navigate('/');
-    } catch (err: any) {
-      toast.error(err?.message || '操作失败');
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : '操作失败');
     } finally {
       setLoading(false);
     }

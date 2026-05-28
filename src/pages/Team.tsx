@@ -14,7 +14,6 @@ import {
 import { useMe, useTeamMembers } from '@/hooks/useAuthApi';
 import { useConfirm } from '@/hooks/useConfirm';
 import { toast } from 'sonner';
-import { cn } from '@/lib/utils';
 
 export default function Team() {
   const confirm = useConfirm();

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Sparkles, Send, Save, FileText, Wand2, ArrowRight, MessageSquare, Loader2 } from 'lucide-react';
+import { Sparkles, Send, Save, FileText, Wand2, ArrowRight, MessageSquare } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useStore } from '@/store';
@@ -51,9 +51,9 @@ export default function Script() {
   // 从 API 加载脚本内容
   useEffect(() => {
     if (scriptData) {
-      setScript(scriptData.content || SAMPLE_SCRIPT);
-      setVersionNo(scriptData.version_no);
-      setDirty(false);
+      setScript(scriptData.content || SAMPLE_SCRIPT); // eslint-disable-line react-hooks/set-state-in-effect
+      setVersionNo(scriptData.version_no); // eslint-disable-line react-hooks/set-state-in-effect
+      setDirty(false); // eslint-disable-line react-hooks/set-state-in-effect
     }
   }, [scriptData]);
 
