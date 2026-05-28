@@ -14,6 +14,7 @@ const (
 	CodeInvalidInput      Code = "INVALID_INPUT"
 	CodeInvalidToken      Code = "INVALID_TOKEN"
 	CodeInsufficientPerm  Code = "INSUFFICIENT_PERMISSION"
+	CodeRateLimited       Code = "RATE_LIMITED"
 	CodeConflict          Code = "CONFLICT"
 	CodeScriptNotFound    Code = "SCRIPT_NOT_FOUND"
 	CodeVersionNotFound   Code = "VERSION_NOT_FOUND"
@@ -67,6 +68,9 @@ func InvalidToken(msg string) *AppError {
 }
 func InsufficientPermission(msg string) *AppError {
 	return &AppError{Code: CodeInsufficientPerm, Message: msg, HTTP: http.StatusForbidden}
+}
+func RateLimited(msg string) *AppError {
+	return &AppError{Code: CodeRateLimited, Message: msg, HTTP: http.StatusTooManyRequests}
 }
 func Conflict(msg string) *AppError {
 	return &AppError{Code: CodeConflict, Message: msg, HTTP: http.StatusConflict}

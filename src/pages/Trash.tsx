@@ -6,10 +6,15 @@ import { useConfirm } from '@/hooks/useConfirm';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
+function daysLeft(deletedAt: string | null): number {
+  if (!deletedAt) return 30;
+  const diff = 30 - Math.floor((Date.now() - new Date(deletedAt).getTime()) / 86_400_000);
+  return Math.max(0, diff);
+}
+
 export default function Trash() {
   const confirm = useConfirm();
-  const { data, isLoading } = useTrash();
-  const items = data?.data ?? [];
+  const { data, isLoading } = useTrash();  const items = data?.data ?? [];
   const restoreMut = useRestoreFromTrash();
   const purgeMut = usePurgeFromTrash();
   const emptyMut = useEmptyTrash();
@@ -44,12 +49,6 @@ export default function Trash() {
         emptyMut.mutate(undefined, { onSuccess: (res) => toast.info(`已清空 ${res.removed} 项`) });
       }
     });
-  }
-
-  function daysLeft(deletedAt: string | null): number {
-    if (!deletedAt) return 30;
-    const diff = 30 - Math.floor((Date.now() - new Date(deletedAt).getTime()) / 86_400_000);
-    return Math.max(0, diff);
   }
 
   if (isLoading) {

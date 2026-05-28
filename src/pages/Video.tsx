@@ -575,10 +575,18 @@ export default function Video() {
             <DialogTitle>渲染完成</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
-            {activeJob?.thumbnail_url && (
+            {activeJob?.result_url && (
+              <video
+                src={activeJob.result_url}
+                controls
+                className="aspect-video rounded-xl w-full object-cover"
+                poster={activeJob.thumbnail_url ?? undefined}
+              />
+            )}
+            {!activeJob?.result_url && activeJob?.thumbnail_url && (
               <img src={activeJob.thumbnail_url} alt="thumbnail" className="aspect-video rounded-xl w-full object-cover" />
             )}
-            {!activeJob?.thumbnail_url && <div className="aspect-video rounded-xl scene-bg-hero" />}
+            {!activeJob?.result_url && !activeJob?.thumbnail_url && <div className="aspect-video rounded-xl scene-bg-hero" />}
             <div className="text-xs text-muted-foreground">
               {activeJob?.size_bytes ? `视频大小: ${(activeJob.size_bytes / 1024 / 1024).toFixed(1)} MB` : ''}
               {activeJob?.duration_ms ? ` · 时长 ${(activeJob.duration_ms / 1000).toFixed(0)}s` : ''}
