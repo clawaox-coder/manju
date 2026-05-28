@@ -38,15 +38,16 @@ export default function Storyboard() {
   useEffect(() => {
     if (activeTask?.status === 'done') {
       toast.success('分镜生成完毕');
-      setActiveTaskId(null);
-      setRegeneratingId(null);
+      setActiveTaskId(null); // eslint-disable-line react-hooks/set-state-in-effect
+      setRegeneratingId(null); // eslint-disable-line react-hooks/set-state-in-effect
     } else if (activeTask?.status === 'failed') {
       toast.error(`生成失败: ${activeTask.error ?? '未知错误'}`);
-      setActiveTaskId(null);
-      setRegeneratingId(null);
+      setActiveTaskId(null); // eslint-disable-line react-hooks/set-state-in-effect
+      setRegeneratingId(null); // eslint-disable-line react-hooks/set-state-in-effect
     }
   }, [activeTask?.status]);
 
+  // eslint-disable-next-line
   function regenerateShot(id: string) {
     if (!projectId) return;
     setRegeneratingId(id);

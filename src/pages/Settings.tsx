@@ -89,7 +89,7 @@ export default function Settings() {
               <h2 className="font-semibold">个人资料</h2>
               <div className="flex items-center gap-5 pb-5 border-b border-border">
                 <Avatar className="w-20 h-20">
-                  <AvatarFallback className="bg-gradient-to-br from-pink-300 via-purple-300 to-indigo-400 text-white font-bold text-2xl">{profile.avatar}</AvatarFallback>
+                  <AvatarFallback className="bg-gradient-to-br from-pink-300 via-purple-300 to-indigo-400 text-white font-bold text-2xl">{displayName.slice(0, 1)}</AvatarFallback>
                 </Avatar>
                 <div className="flex gap-2">
                   <Button variant="outline" size="sm" onClick={() => toast.info('请选择头像图片')}>
@@ -108,14 +108,22 @@ export default function Settings() {
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
-                {(['name', 'email', 'phone', 'bio'] as const).map((k) => (
-                  <div key={k}>
-                    <label className="text-xs text-muted-foreground mb-1.5 block">
-                      {k === 'name' ? '工作室名称' : k === 'email' ? '邮箱' : k === 'phone' ? '手机号' : '简介'}
-                    </label>
-                    <Input value={profile[k]} onChange={(e) => updateProfile({ [k]: e.target.value })} />
-                  </div>
-                ))}
+                <div>
+                  <label className="text-xs text-muted-foreground mb-1.5 block">用户名</label>
+                  <Input value={displayName} onChange={(e) => updateProfile({ name: e.target.value })} />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground mb-1.5 block">邮箱</label>
+                  <Input value={displayEmail} readOnly className="bg-muted" />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground mb-1.5 block">手机号</label>
+                  <Input value={profile.phone} onChange={(e) => updateProfile({ phone: e.target.value })} />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground mb-1.5 block">简介</label>
+                  <Input value={profile.bio} onChange={(e) => updateProfile({ bio: e.target.value })} />
+                </div>
               </div>
               <div className="flex justify-end gap-2 pt-2">
                 <Button variant="outline">取消</Button>
