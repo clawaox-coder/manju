@@ -18,7 +18,15 @@ export default function AuthPage() {
       toast.error('请填写邮箱和密码');
       return;
     }
-    if (mode === 'register' && !form.name) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) {
+      toast.error('请输入有效的邮箱地址');
+      return;
+    }
+    if (form.password.length < 10) {
+      toast.error('密码至少需要 10 位');
+      return;
+    }
+    if (mode === 'register' && !form.name.trim()) {
       toast.error('请填写用户名');
       return;
     }

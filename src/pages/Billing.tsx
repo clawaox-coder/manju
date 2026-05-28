@@ -5,7 +5,8 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
-import { useStore } from '@/store';
+import { useProjects } from '@/hooks/useProjectApi';
+import { useTeamMembers } from '@/hooks/useAuthApi';
 import { useConfirm } from '@/hooks/useConfirm';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -27,12 +28,22 @@ const PLANS: Plan[] = [
 ];
 
 export default function Billing() {
-  const billing = useStore((s) => s.billing);
-  const invoices = useStore((s) => s.invoices);
+  const { data: projectsData } = useProjects({ pageSize: 100 });
+  const { data: teamMembers = [] } = useTeamMembers();
   const confirm = useConfirm();
-  const [plan, setPlan] = useState(billing.plan);
+  const [plan, setPlan] = useState('team');
   const current = PLANS.find((p) => p.key === plan) || PLANS[2];
-  const [autoRenew, setAutoRenew] = useState(billing.autoRenew);
+  const [autoRenew, setAutoRenew] = useState(true);
+
+  const projectCount = projectsData?.data?.length ?? 0;
+  const memberCount = teamMembers.length;
+
+  const usage = [
+    { key: 'render', label: '视频渲染', used: projectCount, total: plan === 'free' ? 5 : plan === 'pro' ? 50 : 120, unit: '次' },
+    { key: 'storage', label: '云端存储', used: 0, total: plan === 'free' ? 5 : plan === 'pro' ? 50 : 200, unit: 'GB' },
+    { key: 'seat', label: '团队席位', used: memberCount, total: plan === 'free' ? 1 : plan === 'pro' ? 3 : 10, unit: '人' },
+    { key: 'ai', label: 'AI Token', used: 0, total: plan === 'free' ? 1000 : plan === 'pro' ? 50000 : 200000, unit: '次' },
+  ];
 
   function switchPlan(target: string) {
     const old = PLANS.find((p) => p.key === plan)!;
@@ -50,7 +61,6 @@ export default function Billing() {
     });
   }
 
-  const USAGE_LABELS: Record<string, string> = { render: '视频渲染', storage: '云端存储', seat: '团队席位', ai: 'AI Token' };
 
   return (
     <div className="p-6 max-w-6xl mx-auto">
@@ -75,7 +85,7 @@ export default function Billing() {
               {current.price} / {current.period}
             </div>
           </div>
-          <div className="text-xs opacity-80 mb-4">下次续费: {billing.renewDate} {autoRenew && '· 自动续费已开启'}</div>
+          <div className="text-xs opacity-80 mb-4">当前周期 {autoRenew && '· 自动续费已开启'}</div>
           <div className="flex gap-2">
             <Button className="bg-white text-brand-700 hover:bg-white/90 shadow-none" onClick={() => document.getElementById('plansGrid')?.scrollIntoView({ behavior: 'smooth' })}>
               升级套餐
@@ -97,19 +107,19 @@ export default function Billing() {
       <Card className="p-5 mb-4">
         <h2 className="font-semibold mb-4">本月用量</h2>
         <div className="grid grid-cols-4 gap-4">
-          {Object.entries(billing.usage).map(([k, u]) => {
-            const pct = Math.round((u.used / u.total) * 100);
+          {usage.map((u) => {
+            const pct = u.total > 0 ? Math.round((u.used / u.total) * 100) : 0;
             const color = pct >= 85 ? 'red' : pct >= 60 ? 'yellow' : 'brand';
             return (
-              <div key={k}>
+              <div key={u.key}>
                 <div className="flex items-baseline justify-between mb-1.5">
-                  <div className="text-xs text-muted-foreground">{USAGE_LABELS[k]}</div>
+                  <div className="text-xs text-muted-foreground">{u.label}</div>
                   <div className={cn('text-[10px]', `text-${color}-600`)}>{pct}%</div>
                 </div>
                 <div className="text-lg font-bold mb-2">
                   {u.used.toLocaleString()} <span className="text-xs font-normal text-muted-foreground">/ {u.total.toLocaleString()} {u.unit}</span>
                 </div>
-                <Progress value={pct} indicatorClassName={cn('!bg-none', `bg-${color}-500`)} />
+                <Progress value={pct} />
               </div>
             );
           })}
@@ -182,22 +192,9 @@ export default function Billing() {
             </tr>
           </thead>
           <tbody>
-            {invoices.map((inv) => (
-              <tr key={inv.id} className="border-t border-border/50 hover:bg-accent/50">
-                <td className="px-5 py-3 text-xs text-muted-foreground">{inv.id}</td>
-                <td className="px-5 py-3 text-xs">{inv.date}</td>
-                <td className="px-5 py-3 text-xs">{inv.plan}</td>
-                <td className="px-5 py-3 text-sm font-medium">{inv.amount}</td>
-                <td className="px-5 py-3">
-                  <Badge variant="success">{inv.status}</Badge>
-                </td>
-                <td className="px-5 py-3 text-right">
-                  <Button variant="ghost" size="sm" onClick={() => toast.success(`下载发票 ${inv.id}`)}>
-                    <Download className="w-3 h-3" /> 下载
-                  </Button>
-                </td>
-              </tr>
-            ))}
+            <tr>
+              <td colSpan={6} className="px-5 py-8 text-center text-xs text-muted-foreground">暂无账单记录</td>
+            </tr>
           </tbody>
         </table>
       </Card>
