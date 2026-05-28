@@ -4,6 +4,8 @@ package service
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"net/netip"
 	"strings"
@@ -15,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/manju-org/manju/services/auth-service/internal/apperr"
+	"github.com/manju-org/manju/services/auth-service/internal/logger"
 	"github.com/manju-org/manju/services/auth-service/internal/password"
 	"github.com/manju-org/manju/services/auth-service/internal/redisx"
 	"github.com/manju-org/manju/services/auth-service/internal/repo/db"
@@ -259,6 +262,137 @@ func (a *Auth) Me(ctx context.Context, userID uuid.UUID) (Identity, error) {
 		return Identity{}, apperr.Internal("get team").WithCause(err)
 	}
 	return Identity{User: user, Team: team, Role: m.Role}, nil
+}
+
+// ---- forgot / reset password ----
+
+func (a *Auth) ForgotPassword(ctx context.Context, email string) error {
+	email = strings.TrimSpace(strings.ToLower(email))
+	if email == "" {
+		return nil // 不泄露是否存在
+	}
+	q := db.New(a.Pool)
+	user, err := q.GetUserByEmail(ctx, email)
+	if err != nil {
+		// 不管用户是否存在, 都返回 200
+		return nil
+	}
+
+	tokenBytes := make([]byte, 32)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		return apperr.Internal("生成 reset token 失败").WithCause(err)
+	}
+	resetToken := hex.EncodeToString(tokenBytes)
+
+	if err := a.Redis.SetResetToken(ctx, resetToken, user.ID.String(), 15*time.Minute); err != nil {
+		return apperr.Internal("存储 reset token 失败").WithCause(err)
+	}
+
+	// DEV: 打印 token (生产环境应发邮件)
+	log := logger.FromContext(ctx)
+	log.Info().Str("reset_token", resetToken).Str("user_id", user.ID.String()).Msg("password reset token generated")
+	return nil
+}
+
+func (a *Auth) ResetPassword(ctx context.Context, resetToken, newPassword string) error {
+	if resetToken == "" {
+		return apperr.InvalidInput("token 必填")
+	}
+	if err := validatePassword(newPassword); err != nil {
+		return err
+	}
+
+	userIDStr, err := a.Redis.LookupResetToken(ctx, resetToken)
+	if err != nil {
+		return apperr.InvalidToken("reset token 无效或已过期")
+	}
+
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		return apperr.Internal("parse user_id").WithCause(err)
+	}
+
+	hashed, err := password.Hash(newPassword, a.BcryptCost)
+	if err != nil {
+		return apperr.Internal("hash 密码失败").WithCause(err)
+	}
+
+	q := db.New(a.Pool)
+	if err := q.UpdateUserPassword(ctx, userID, hashed); err != nil {
+		return apperr.Internal("更新密码失败").WithCause(err)
+	}
+
+	_ = a.Redis.DropResetToken(ctx, resetToken)
+	return nil
+}
+
+// ---- OAuth (GitHub) ----
+
+func (a *Auth) OAuthGitHubFindOrCreate(ctx context.Context, email, name, avatarURL string, info ClientInfo) (Identity, TokenPair, error) {
+	email = strings.TrimSpace(strings.ToLower(email))
+	if email == "" {
+		return Identity{}, TokenPair{}, apperr.InvalidInput("GitHub 账号未提供邮箱")
+	}
+
+	q := db.New(a.Pool)
+	user, err := q.GetUserByEmail(ctx, email)
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return Identity{}, TokenPair{}, apperr.Internal("get user by email").WithCause(err)
+		}
+		// 用户不存在, 创建新用户 (无密码, OAuth-only)
+		var ident Identity
+		err = a.withTx(ctx, func(txq *db.Queries) error {
+			u, err := txq.CreateUser(ctx, db.CreateUserParams{
+				Email:        email,
+				PasswordHash: nil,
+				Name:         name,
+			})
+			if err != nil {
+				if isUniqueViolation(err) {
+					return apperr.EmailAlreadyExists()
+				}
+				return apperr.Internal("create user").WithCause(err)
+			}
+			t, err := txq.CreateTeam(ctx, name+"'s Team")
+			if err != nil {
+				return apperr.Internal("create team").WithCause(err)
+			}
+			if _, err := txq.CreateTeamMember(ctx, db.CreateTeamMemberParams{
+				TeamID: t.ID, UserID: u.ID, Role: db.TeamRoleOwner,
+			}); err != nil {
+				return apperr.Internal("create team_member").WithCause(err)
+			}
+			ident = Identity{User: u, Team: t, Role: db.TeamRoleOwner}
+			return nil
+		})
+		if err != nil {
+			return Identity{}, TokenPair{}, err
+		}
+		pair, err := a.issueTokenPair(ctx, ident, info, nil)
+		if err != nil {
+			return Identity{}, TokenPair{}, err
+		}
+		return ident, pair, nil
+	}
+
+	// 用户已存在
+	membership, err := q.GetPrimaryTeamMembershipByUser(ctx, user.ID)
+	if err != nil {
+		return Identity{}, TokenPair{}, apperr.Internal("get membership").WithCause(err)
+	}
+	team, err := q.GetTeamByID(ctx, membership.TeamID)
+	if err != nil {
+		return Identity{}, TokenPair{}, apperr.Internal("get team").WithCause(err)
+	}
+
+	_ = q.TouchUserLogin(ctx, user.ID)
+	ident := Identity{User: user, Team: team, Role: membership.Role}
+	pair, err := a.issueTokenPair(ctx, ident, info, nil)
+	if err != nil {
+		return Identity{}, TokenPair{}, err
+	}
+	return ident, pair, nil
 }
 
 // ---- helpers ----

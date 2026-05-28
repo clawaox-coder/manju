@@ -31,6 +31,12 @@ type Config struct {
 	RegisterRatePerHour int
 
 	CORSOrigins []string
+
+	// OAuth GitHub
+	GitHubClientID     string
+	GitHubClientSecret string
+	GitHubCallbackURL  string
+	FrontendURL        string
 }
 
 func FromEnv() (Config, error) {
@@ -77,6 +83,12 @@ func FromEnv() (Config, error) {
 			c.CORSOrigins = append(c.CORSOrigins, s)
 		}
 	}
+
+	// OAuth GitHub (optional — only required if using GitHub login)
+	c.GitHubClientID = os.Getenv("GITHUB_CLIENT_ID")
+	c.GitHubClientSecret = os.Getenv("GITHUB_CLIENT_SECRET")
+	c.GitHubCallbackURL = getenv("GITHUB_CALLBACK_URL", "http://localhost:8001/v1/auth/oauth/github/callback")
+	c.FrontendURL = getenv("FRONTEND_URL", "http://localhost:5173")
 
 	return c, nil
 }

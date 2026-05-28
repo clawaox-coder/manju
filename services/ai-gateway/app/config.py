@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     # anthropic-beta header (启用 1m 上下文等 beta 特性). 留空走默认.
     # 中转网关可能要求显式 flag, 不能由 model 名 [1m] 后缀替代.
     anthropic_beta: str = ""
+    openai_api_key: str = ""
     cors_origins: str = "http://localhost:5173,http://localhost:5174"
     log_level: str = "info"
 

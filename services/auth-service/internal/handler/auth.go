@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/netip"
 
+	"github.com/manju-org/manju/services/auth-service/internal/apperr"
+	"github.com/manju-org/manju/services/auth-service/internal/config"
 	"github.com/manju-org/manju/services/auth-service/internal/httpx"
 	"github.com/manju-org/manju/services/auth-service/internal/middleware"
 	"github.com/manju-org/manju/services/auth-service/internal/repo/db"
@@ -15,6 +17,7 @@ import (
 type Auth struct {
 	Svc  *service.Auth
 	Pool db.DBTX
+	Cfg  *config.Config
 }
 
 // ---- DTOs ----
@@ -183,4 +186,98 @@ func (h *Auth) Logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, r, http.StatusOK, map[string]any{"ok": true})
+}
+
+// ---- forgot / reset password ----
+
+type forgotPasswordReq struct {
+	Email string `json:"email"`
+}
+
+func (h *Auth) ForgotPassword(w http.ResponseWriter, r *http.Request) {
+	var body forgotPasswordReq
+	if err := httpx.DecodeJSON(r, &body); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := h.Svc.ForgotPassword(r.Context(), body.Email); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, r, http.StatusOK, map[string]any{"ok": true})
+}
+
+type resetPasswordReq struct {
+	Token       string `json:"token"`
+	NewPassword string `json:"new_password"`
+}
+
+func (h *Auth) ResetPassword(w http.ResponseWriter, r *http.Request) {
+	var body resetPasswordReq
+	if err := httpx.DecodeJSON(r, &body); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := h.Svc.ResetPassword(r.Context(), body.Token, body.NewPassword); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, r, http.StatusOK, map[string]any{"ok": true})
+}
+
+// ---- OAuth GitHub ----
+
+func (h *Auth) OAuthGitHub(w http.ResponseWriter, r *http.Request) {
+	clientID := h.Cfg.GitHubClientID
+	callbackURL := h.Cfg.GitHubCallbackURL
+	url := "https://github.com/login/oauth/authorize?client_id=" + clientID +
+		"&redirect_uri=" + callbackURL + "&scope=user:email"
+	http.Redirect(w, r, url, http.StatusTemporaryRedirect)
+}
+
+func (h *Auth) OAuthGitHubCallback(w http.ResponseWriter, r *http.Request) {
+	code := r.URL.Query().Get("code")
+	if code == "" {
+		httpx.WriteError(w, r, apperr.InvalidInput("缺少 code 参数"))
+		return
+	}
+
+	ctx := r.Context()
+
+	// Exchange code for access token
+	ghToken, err := exchangeGitHubCode(ctx, h.Cfg.GitHubClientID, h.Cfg.GitHubClientSecret, code)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+
+	// Fetch user info
+	ghUser, err := fetchGitHubUser(ctx, ghToken)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+
+	// Fetch primary email
+	email, err := fetchGitHubEmail(ctx, ghToken)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+
+	name := ghUser.Name
+	if name == "" {
+		name = ghUser.Login
+	}
+
+	ident, pair, err := h.Svc.OAuthGitHubFindOrCreate(ctx, email, name, ghUser.AvatarURL, clientInfoFrom(r))
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	_ = ident
+
+	frontendURL := h.Cfg.FrontendURL
+	redirectURL := frontendURL + "/#access_token=" + pair.AccessToken + "&refresh_token=" + pair.RefreshToken
+	http.Redirect(w, r, redirectURL, http.StatusTemporaryRedirect)
 }

@@ -91,4 +91,25 @@ func (c *Client) FlushAll(ctx context.Context) error {
 	return c.rdb.FlushAll(ctx).Err()
 }
 
+// ---- password reset ----
+
+// SetResetToken 存储 reset:{token} → userID, TTL 15 分钟.
+func (c *Client) SetResetToken(ctx context.Context, token, userID string, ttl time.Duration) error {
+	return c.rdb.Set(ctx, "reset:"+token, userID, ttl).Err()
+}
+
+// LookupResetToken 返回 userID; 不存在返回 ErrCacheMiss.
+func (c *Client) LookupResetToken(ctx context.Context, token string) (string, error) {
+	v, err := c.rdb.Get(ctx, "reset:"+token).Result()
+	if errors.Is(err, redis.Nil) {
+		return "", ErrCacheMiss
+	}
+	return v, err
+}
+
+// DropResetToken 删除 reset token.
+func (c *Client) DropResetToken(ctx context.Context, token string) error {
+	return c.rdb.Del(ctx, "reset:"+token).Err()
+}
+
 var ErrCacheMiss = errors.New("cache miss")

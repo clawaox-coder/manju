@@ -16,6 +16,11 @@ import (
 	"github.com/go-chi/cors"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	"go.opentelemetry.io/otel/sdk/resource"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 
 	"github.com/manju-org/manju/services/script-service/internal/config"
 	"github.com/manju-org/manju/services/script-service/internal/handler"
@@ -26,7 +31,33 @@ import (
 	"github.com/manju-org/manju/services/script-service/internal/token"
 )
 
+func initTracer(serviceName string) func(context.Context) {
+	endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+	if endpoint == "" {
+		endpoint = "http://localhost:4318"
+	}
+	exp, err := otlptracehttp.New(context.Background(),
+		otlptracehttp.WithEndpointURL(endpoint),
+	)
+	if err != nil {
+		_, _ = os.Stderr.WriteString("otel exporter: " + err.Error() + "\n")
+		return func(context.Context) {}
+	}
+	res, _ := resource.New(context.Background(),
+		resource.WithAttributes(semconv.ServiceName(serviceName)),
+	)
+	tp := sdktrace.NewTracerProvider(
+		sdktrace.WithBatcher(exp),
+		sdktrace.WithResource(res),
+	)
+	otel.SetTracerProvider(tp)
+	return func(ctx context.Context) { _ = tp.Shutdown(ctx) }
+}
+
 func main() {
+	shutdown := initTracer("script-service")
+	defer shutdown(context.Background())
+
 	cfg, err := config.FromEnv()
 	if err != nil {
 		_, _ = os.Stderr.WriteString("config: " + err.Error() + "\n")
@@ -69,6 +100,7 @@ func main() {
 
 	r := chi.NewRouter()
 	r.Use(chimiddleware.Recoverer)
+	r.Use(scriptmw.Tracing)
 	r.Use(scriptmw.RequestContext(log))
 	r.Use(scriptmw.AccessLog)
 	r.Use(cors.Handler(cors.Options{

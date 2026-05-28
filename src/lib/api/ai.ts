@@ -108,3 +108,30 @@ export interface AiTask {
 export async function getAiTask(taskId: string): Promise<AiTask> {
   return request<AiTask>(`/v1/ai/tasks/${taskId}`, { base: AI_BASE });
 }
+
+// ---- TTS (Text-to-Speech) ----
+
+export type TTSVoice = 'alloy' | 'echo' | 'fable' | 'onyx' | 'nova' | 'shimmer';
+
+export interface TTSInput {
+  text: string;
+  voice: TTSVoice;
+  speed?: number;
+}
+
+export async function generateTTS(params: TTSInput): Promise<Blob> {
+  const token = getAccessToken();
+  const res = await fetch(`${AI_BASE}/v1/ai/tts`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.detail?.message || `TTS 生成失败: ${res.status}`);
+  }
+  return res.blob();
+}

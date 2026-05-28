@@ -4,6 +4,7 @@ import uuid as uuidlib
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
@@ -258,3 +259,29 @@ async def list_tasks(
         project_id=project_id, limit=limit,
     )
     return {"data": [task_to_dto(t) for t in items], "meta": {"count": len(items)}}
+
+
+# ---- 8. POST /v1/ai/tts ----
+
+class TTSRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=4096)
+    voice: str = Field(min_length=1)
+    speed: float = Field(default=1.0, ge=0.25, le=4.0)
+
+
+@router.post("/tts")
+async def tts(
+    body: TTSRequest,
+    auth: AuthContext = Depends(require_auth),
+):
+    _require_write(auth)
+    audio_bytes = await ai_svc.tts_generate(
+        text=body.text,
+        voice=body.voice,
+        speed=body.speed,
+    )
+    return Response(
+        content=audio_bytes,
+        media_type="audio/mpeg",
+        headers={"Content-Disposition": 'inline; filename="tts.mp3"'},
+    )

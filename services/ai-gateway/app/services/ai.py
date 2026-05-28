@@ -16,6 +16,7 @@ import time
 from typing import Any, AsyncGenerator
 
 import anthropic
+import httpx
 from fastapi import HTTPException
 
 from .. config import get_settings
@@ -443,7 +444,73 @@ async def voice_match(
     return result
 
 
-# ---- 6. edit/auto ----
+# ---- 7. TTS (OpenAI) ----
+
+VALID_TTS_VOICES = {"alloy", "echo", "fable", "onyx", "nova", "shimmer"}
+
+
+async def tts_generate(
+    *,
+    text: str,
+    voice: str,
+    speed: float = 1.0,
+) -> bytes:
+    """调用 OpenAI TTS API, 返回 mp3 bytes.
+
+    无 OPENAI_API_KEY 时返回 503.
+    """
+    s = get_settings()
+    if not s.openai_api_key:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "TTS_PROVIDER_UNAVAILABLE",
+                "message": "TTS 未配置: 请设置 OPENAI_API_KEY",
+            },
+        )
+
+    if voice not in VALID_TTS_VOICES:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "INVALID_VOICE",
+                "message": f"voice 必须是 {sorted(VALID_TTS_VOICES)} 之一",
+            },
+        )
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        try:
+            resp = await client.post(
+                "https://api.openai.com/v1/audio/speech",
+                headers={
+                    "Authorization": f"Bearer {s.openai_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": "tts-1",
+                    "input": text,
+                    "voice": voice,
+                    "speed": speed,
+                    "response_format": "mp3",
+                },
+            )
+            if resp.status_code != 200:
+                logger.error(
+                    f"OpenAI TTS error: {resp.status_code} {resp.text[:200]}"
+                )
+                raise HTTPException(
+                    status_code=502,
+                    detail={
+                        "code": "TTS_UPSTREAM_ERROR",
+                        "message": f"OpenAI TTS 返回 {resp.status_code}",
+                    },
+                )
+            return resp.content
+        except httpx.HTTPError as e:
+            raise HTTPException(
+                status_code=502,
+                detail={"code": "TTS_NETWORK_ERROR", "message": str(e)},
+            )
 
 EDIT_AUTO_SYSTEM = """你是一个剪辑参数生成 AI 助手。根据剧本风格和参数, 给出剪辑 preset 建议。
 输出 JSON:

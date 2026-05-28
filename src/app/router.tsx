@@ -2,7 +2,7 @@ import { Suspense, type LazyExoticComponent, type ComponentType } from 'react';
 import { createBrowserRouter, Navigate, RouterProvider } from 'react-router-dom';
 import { AppShell } from '@/components/layout/AppShell';
 import { lazyWithRetry } from '@/lib/lazyWithRetry';
-import { getAccessToken } from '@/lib/api/tokens';
+import { getAccessToken, setTokens } from '@/lib/api/tokens';
 
 const Auth = lazyWithRetry(() => import('@/pages/Auth'));
 const Dashboard = lazyWithRetry(() => import('@/pages/Dashboard'));
@@ -43,6 +43,18 @@ const lazyEl = (C: LazyExoticComponent<ComponentType>) => (
 );
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
+  // Handle OAuth callback: extract tokens from URL hash fragment
+  const hash = window.location.hash;
+  if (hash.includes('access_token=')) {
+    const params = new URLSearchParams(hash.slice(1));
+    const accessToken = params.get('access_token');
+    const refreshToken = params.get('refresh_token');
+    if (accessToken && refreshToken) {
+      setTokens(accessToken, refreshToken);
+      window.history.replaceState(null, '', window.location.pathname);
+    }
+  }
+
   if (!getAccessToken()) {
     return <Navigate to="/auth" replace />;
   }

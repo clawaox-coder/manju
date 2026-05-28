@@ -191,6 +191,16 @@ func (q *Queries) RevokeAllRefreshTokensForUser(ctx context.Context, p RevokeAll
 	return err
 }
 
+// ---- password update ----
+
+const updateUserPassword = `UPDATE users SET password_hash = $2, updated_at = now()
+WHERE id = $1 AND deleted_at IS NULL`
+
+func (q *Queries) UpdateUserPassword(ctx context.Context, id uuid.UUID, hash string) error {
+	_, err := q.db.Exec(ctx, updateUserPassword, id, hash)
+	return err
+}
+
 // ---- team members ----
 
 const listTeamMembers = `SELECT u.id, u.email, u.name, u.avatar_url, u.status, tm.role, tm.created_at
