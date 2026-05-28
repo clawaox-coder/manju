@@ -3,6 +3,7 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useAssets } from '@/hooks/useAssetApi';
+import { UploadDialog } from '@/components/domain/UploadDialog';
 import { toast } from 'sonner';
 import { useEffect, useState } from 'react';
 import { cn } from '@/lib/utils';
@@ -10,6 +11,7 @@ import { cn } from '@/lib/utils';
 export default function Music() {
   const { data, isLoading } = useAssets({ type: 'music' });
   const [playingId, setPlayingId] = useState<string | null>(null);
+  const [uploadOpen, setUploadOpen] = useState(false);
 
   const music = data?.data ?? [];
 
@@ -42,7 +44,7 @@ export default function Music() {
           <h1 className="text-xl font-bold">音乐库</h1>
           <p className="text-xs text-muted-foreground mt-1">{music.length} 首版权音乐</p>
         </div>
-        <Button onClick={() => toast.info('请选择音乐文件')}>
+        <Button onClick={() => setUploadOpen(true)}>
           <Upload className="w-3.5 h-3.5" /> 上传音乐
         </Button>
       </div>
@@ -97,6 +99,8 @@ export default function Music() {
           </tbody>
         </table>
       </Card>
+
+      <UploadDialog open={uploadOpen} onOpenChange={setUploadOpen} assetType="music" accept="audio/*" title="上传音乐" />
     </div>
   );
 }

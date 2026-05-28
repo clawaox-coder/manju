@@ -3,6 +3,7 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useAssets } from '@/hooks/useAssetApi';
+import { UploadDialog } from '@/components/domain/UploadDialog';
 import { toast } from 'sonner';
 import { useEffect, useMemo, useState } from 'react';
 import { cn } from '@/lib/utils';
@@ -11,6 +12,7 @@ export default function Sfx() {
   const { data, isLoading } = useAssets({ type: 'sfx' });
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [cat, setCat] = useState('全部');
+  const [uploadOpen, setUploadOpen] = useState(false);
 
   const sfx = data?.data ?? [];
 
@@ -44,7 +46,7 @@ export default function Sfx() {
           <h1 className="text-xl font-bold">音效库</h1>
           <p className="text-xs text-muted-foreground mt-1">动作、环境、转场、UI 音效 · 共 {sfx.length} 个</p>
         </div>
-        <Button onClick={() => toast.info('请选择音效文件')}>
+        <Button onClick={() => setUploadOpen(true)}>
           <Upload className="w-3.5 h-3.5" /> 上传音效
         </Button>
       </div>
@@ -113,6 +115,8 @@ export default function Sfx() {
           </tbody>
         </table>
       </Card>
+
+      <UploadDialog open={uploadOpen} onOpenChange={setUploadOpen} assetType="sfx" accept="audio/*" title="上传音效" />
     </div>
   );
 }

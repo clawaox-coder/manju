@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/context-menu';
 import { useAssets, useDeleteAsset } from '@/hooks/useAssetApi';
 import { useConfirm } from '@/hooks/useConfirm';
+import { UploadDialog } from '@/components/domain/UploadDialog';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -20,6 +21,7 @@ export default function Props() {
   const deleteAsset = useDeleteAsset();
   const confirm = useConfirm();
   const [propFilter, setPropFilter] = useState('全部');
+  const [uploadOpen, setUploadOpen] = useState(false);
 
   const props = data?.data ?? [];
 
@@ -34,7 +36,7 @@ export default function Props() {
           <p className="text-xs text-muted-foreground mt-1">共 {filtered.length} 个道具资源</p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={() => toast.info('请上传道具图片')}>
+          <Button variant="outline" onClick={() => setUploadOpen(true)}>
             <Upload className="w-3.5 h-3.5" /> 上传道具
           </Button>
           <Button onClick={() => toast.success('AI 已生成新道具')}>
@@ -110,6 +112,8 @@ export default function Props() {
           </ContextMenu>
         ))}
       </motion.div>
+
+      <UploadDialog open={uploadOpen} onOpenChange={setUploadOpen} assetType="prop" accept="image/*" title="上传道具" />
     </div>
   );
 }

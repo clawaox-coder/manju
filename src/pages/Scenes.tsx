@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { useAssets } from '@/hooks/useAssetApi';
+import { UploadDialog } from '@/components/domain/UploadDialog';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -13,6 +14,7 @@ export default function Scenes() {
   const { data, isLoading } = useAssets({ type: 'scene' });
   const [query, setQuery] = useState('');
   const [cat, setCat] = useState('全部');
+  const [uploadOpen, setUploadOpen] = useState(false);
 
   const scenes = data?.data ?? [];
 
@@ -32,7 +34,7 @@ export default function Scenes() {
           <p className="text-xs text-muted-foreground mt-1">共 {scenes.length} 个场景资源</p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={() => toast.info('请上传图片')}>
+          <Button variant="outline" onClick={() => setUploadOpen(true)}>
             <Upload className="w-3.5 h-3.5" /> 上传场景
           </Button>
           <Button onClick={() => toast.success('AI 已生成新场景')}>
@@ -91,6 +93,8 @@ export default function Scenes() {
           </motion.div>
         ))}
       </motion.div>
+
+      <UploadDialog open={uploadOpen} onOpenChange={setUploadOpen} assetType="scene" accept="image/*" title="上传场景" />
     </div>
   );
 }

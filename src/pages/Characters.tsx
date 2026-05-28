@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/context-menu';
 import { useConfirm } from '@/hooks/useConfirm';
 import { useAssets, useDeleteAsset } from '@/hooks/useAssetApi';
+import { UploadDialog } from '@/components/domain/UploadDialog';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -39,6 +40,7 @@ export default function Characters() {
   const confirm = useConfirm();
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('全部');
+  const [uploadOpen, setUploadOpen] = useState(false);
 
   const characters = data?.data ?? [];
 
@@ -59,7 +61,7 @@ export default function Characters() {
           <p className="text-xs text-muted-foreground mt-1">共 {characters.length} 个角色 · {filtered.length} 个匹配</p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={() => toast.info('请上传角色图片')}>
+          <Button variant="outline" onClick={() => setUploadOpen(true)}>
             <Upload className="w-3.5 h-3.5" /> 上传角色
           </Button>
           <Button onClick={() => toast.success('AI 已生成新角色')}>
@@ -148,6 +150,8 @@ export default function Characters() {
           </ContextMenu>
         ))}
       </motion.div>
+
+      <UploadDialog open={uploadOpen} onOpenChange={setUploadOpen} assetType="character" accept="image/*" title="上传角色" />
     </div>
   );
 }
