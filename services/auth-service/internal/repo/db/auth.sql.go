@@ -190,3 +190,38 @@ func (q *Queries) RevokeAllRefreshTokensForUser(ctx context.Context, p RevokeAll
 	_, err := q.db.Exec(ctx, revokeAllRefreshTokensForUser, p.UserID, p.Reason)
 	return err
 }
+
+// ---- team members ----
+
+const listTeamMembers = `SELECT u.id, u.email, u.name, u.avatar_url, u.status, tm.role, tm.created_at
+FROM team_members tm
+JOIN users u ON u.id = tm.user_id
+WHERE tm.team_id = $1 AND u.status = 'active'
+ORDER BY tm.created_at ASC`
+
+type TeamMemberRow struct {
+	ID        uuid.UUID
+	Email     string
+	Name      string
+	AvatarURL *string
+	Status    UserStatus
+	Role      TeamRole
+	JoinedAt  time.Time
+}
+
+func (q *Queries) ListTeamMembers(ctx context.Context, teamID uuid.UUID) ([]TeamMemberRow, error) {
+	rows, err := q.db.Query(ctx, listTeamMembers, teamID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var members []TeamMemberRow
+	for rows.Next() {
+		var m TeamMemberRow
+		if err := rows.Scan(&m.ID, &m.Email, &m.Name, &m.AvatarURL, &m.Status, &m.Role, &m.JoinedAt); err != nil {
+			return nil, err
+		}
+		members = append(members, m)
+	}
+	return members, rows.Err()
+}

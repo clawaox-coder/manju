@@ -7,6 +7,7 @@ import { Slider } from '@/components/ui/slider';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { useStore } from '@/store';
+import { useMe } from '@/hooks/useAuthApi';
 import { useConfirm } from '@/hooks/useConfirm';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -36,6 +37,7 @@ type TabKey = (typeof TABS)[number]['key'];
 
 export default function Settings() {
   const [tab, setTab] = useState<TabKey>('profile');
+  const { data: me } = useMe();
   const profile = useStore((s) => s.profile);
   const updateProfile = useStore((s) => s.updateProfile);
   const preferences = useStore((s) => s.preferences);
@@ -49,6 +51,9 @@ export default function Settings() {
   const notifPrefs = useStore((s) => s.notificationPrefs);
   const updateNotif = useStore((s) => s.updateNotificationPref);
   const confirm = useConfirm();
+
+  const displayName = me?.user?.name ?? profile.name;
+  const displayEmail = me?.user?.email ?? profile.email;
 
   return (
     <div className="p-6 max-w-5xl mx-auto">

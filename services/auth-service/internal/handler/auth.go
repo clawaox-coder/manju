@@ -13,7 +13,8 @@ import (
 )
 
 type Auth struct {
-	Svc *service.Auth
+	Svc  *service.Auth
+	Pool db.DBTX
 }
 
 // ---- DTOs ----

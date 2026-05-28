@@ -106,6 +106,7 @@ func main() {
 			r.Post("/logout", h.Logout)
 		})
 		r.With(authmw.RequireAuth(signer)).Get("/me", h.Me)
+		r.With(authmw.RequireAuth(signer)).Get("/team/members", h.TeamMembers)
 	})
 
 	srv := &http.Server{
