@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button';
 import { useStore } from '@/store';
 import { ProjectCard } from '@/components/domain/ProjectCard';
 import { useProjects, useDeleteProject, useDuplicateProject } from '@/hooks/useProjectApi';
+import { useTeamMembers } from '@/hooks/useAuthApi';
 import { toast } from 'sonner';
 import { useConfirm } from '@/hooks/useConfirm';
 import { cn } from '@/lib/utils';
@@ -32,21 +33,27 @@ const TEMPLATE_SUGGESTIONS = [
 export default function Dashboard() {
   const navigate = useNavigate();
   const confirm = useConfirm();
-  const billing = useStore((s) => s.billing);
+  const setProjectId = useStore((s) => s.setProjectId);
+  const setProjectName = useStore((s) => s.setProjectName);
+  const { data: teamMembers = [] } = useTeamMembers();
   const { data } = useProjects({ pageSize: 5 });
   const projects = data?.data ?? [];
   const deleteMut = useDeleteProject();
   const dupMut = useDuplicateProject();
 
   const stats: { label: string; value: string; delta: string; color: string; icon: typeof LayoutGrid; onClick?: () => void }[] = [
-    { label: '本月作品', value: projects.length.toString(), delta: '+ 3 本周', color: 'brand', icon: LayoutGrid },
-    { label: '渲染时长', value: '12.4h', delta: '+ 2.1h', color: 'green', icon: Clock },
-    { label: '积分余额', value: '8,420', delta: '+ 充值积分', color: 'purple', icon: Coins, onClick: () => toast.info('打开充值面板') },
-    { label: '团队成员', value: `${billing.usage.seat.used}`, delta: `${billing.usage.seat.used - 3} 在线`, color: 'gray', icon: UsersIcon, onClick: () => navigate('/team') }
+    { label: '本月作品', value: projects.length.toString(), delta: '', color: 'brand', icon: LayoutGrid },
+    { label: '渲染时长', value: '—', delta: '', color: 'green', icon: Clock },
+    { label: '积分余额', value: '—', delta: '', color: 'purple', icon: Coins, onClick: () => navigate('/billing') },
+    { label: '团队成员', value: `${teamMembers.length}`, delta: '', color: 'gray', icon: UsersIcon, onClick: () => navigate('/team') }
   ];
 
   function handleProjectAction(p: Project, action: 'open' | 'rename' | 'duplicate' | 'delete' | 'export') {
-    if (action === 'open') navigate(`/video?project=${p.id}`);
+    if (action === 'open') {
+      setProjectId(p.id);
+      setProjectName(p.name);
+      navigate('/script');
+    }
     else if (action === 'rename') toast.info(`重命名「${p.name}」`);
     else if (action === 'duplicate') {
       dupMut.mutate(p.id, { onSuccess: () => toast.success(`已复制「${p.name}」`) });

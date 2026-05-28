@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Play, Pause, Sparkles, Loader2 } from 'lucide-react';
+import { Play, Pause, Sparkles, Loader2, Upload } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useAssets } from '@/hooks/useAssetApi';
+import { UploadDialog } from '@/components/domain/UploadDialog';
 import { useStore } from '@/store';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -29,6 +30,7 @@ export default function Voice() {
   const { data, isLoading } = useAssets({ type: 'voice' });
   const shots = useStore((s) => s.shots);
   const [playing, setPlaying] = useState<string | null>(null);
+  const [uploadOpen, setUploadOpen] = useState(false);
 
   const voices = data?.data ?? [];
 
@@ -50,6 +52,9 @@ export default function Voice() {
         </div>
         <Button onClick={() => toast.success(`已为 ${shots.length} 个分镜匹配配音`)}>
           <Sparkles className="w-3.5 h-3.5" /> 一键 AI 配音
+        </Button>
+        <Button variant="outline" onClick={() => setUploadOpen(true)}>
+          <Upload className="w-3.5 h-3.5" /> 上传配音
         </Button>
       </div>
 
@@ -118,6 +123,8 @@ export default function Voice() {
           ))}
         </div>
       </Card>
+
+      <UploadDialog open={uploadOpen} onOpenChange={setUploadOpen} assetType="voice" accept="audio/*" title="上传配音" />
     </div>
   );
 }

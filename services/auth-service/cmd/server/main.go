@@ -74,7 +74,7 @@ func main() {
 		LoginFailWindow: 5 * time.Minute,
 		LoginLockTTL:    15 * time.Minute,
 	}
-	h := &handler.Auth{Svc: authSvc}
+	h := &handler.Auth{Svc: authSvc, Pool: pool}
 
 	registerRL := authmw.RateLimit{
 		Redis: rdb, Bucket: "register", Window: time.Hour, Limit: int64(cfg.RegisterRatePerHour),

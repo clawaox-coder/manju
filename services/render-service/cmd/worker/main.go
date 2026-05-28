@@ -71,6 +71,7 @@ func main() {
 	w := worker.New(worker.Deps{
 		Log:      log,
 		Repo:     repoJ,
+		Pool:     pool,
 		S3:       s3c,
 		Renderer: renderer,
 		Cfg:      cfg,

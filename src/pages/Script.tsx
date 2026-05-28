@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useStore } from '@/store';
 import { useScript, useUpdateScript } from '@/hooks/useScriptApi';
+import { streamScriptContinue } from '@/lib/api/ai';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -104,20 +105,50 @@ export default function Script() {
 
   function send(prompt: string) {
     if (!prompt.trim()) return;
+    const projectId = useStore.getState().projectId;
+    if (!projectId) {
+      toast.error('请先选择一个项目');
+      return;
+    }
     setChat((c) => [...c, { role: 'user', text: prompt }]);
     setAskInput('');
-    setTimeout(() => {
-      setChat((c) => [
-        ...c,
-        {
-          role: 'ai',
-          text: `好的, 我来帮你${prompt.includes('续写') ? '续写剧情' : prompt.includes('对白') ? '生成对白' : prompt.includes('分镜') ? '提取分镜' : '处理这个请求'}...
+    setChat((c) => [...c, { role: 'ai', text: '' }]);
 
-【生成结果】
-${prompt.includes('续写') ? '【场景 5】城市夜景 · 外 · 夜\n[镜头拉远, 林夕走出剧院, 抬头看向繁星点点的夜空。]' : prompt.includes('对白') ? '林夕: 这条路再难, 我也要走下去。' : '已识别 4 个场景, 6 段对白, 2 个角色, 是否填充到分镜?'}`
+    (async () => {
+      try {
+        let full = '';
+        for await (const evt of streamScriptContinue({
+          project_id: projectId,
+          context: script.slice(-2000),
+          instruction: prompt,
+        })) {
+          if (evt.event === 'delta') {
+            full += (evt.data as { text?: string }).text ?? '';
+            setChat((c) => {
+              const next = [...c];
+              next[next.length - 1] = { role: 'ai', text: full };
+              return next;
+            });
+          } else if (evt.event === 'error') {
+            toast.error(`AI 错误: ${(evt.data as { message?: string }).message ?? '未知'}`);
+          }
         }
-      ]);
-    }, 800);
+        if (!full) {
+          setChat((c) => {
+            const next = [...c];
+            next[next.length - 1] = { role: 'ai', text: '(AI 未返回内容)' };
+            return next;
+          });
+        }
+      } catch (err) {
+        toast.error(`AI 请求失败: ${(err as Error).message}`);
+        setChat((c) => {
+          const next = [...c];
+          next[next.length - 1] = { role: 'ai', text: '(请求失败)' };
+          return next;
+        });
+      }
+    })();
   }
 
   function splitShot() {
