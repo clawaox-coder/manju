@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog"
 	kgo "github.com/segmentio/kafka-go"
 
@@ -35,6 +36,7 @@ import (
 type Deps struct {
 	Log      zerolog.Logger
 	Repo     *repo.Jobs
+	Pool     *pgxpool.Pool
 	S3       *s3util.Client
 	Renderer Renderer
 	Cfg      config.Config
@@ -196,12 +198,36 @@ func (w *Worker) processJob(ctx context.Context, log zerolog.Logger, p msgPayloa
 		return w.fail(ctx, teamID, userID, jobID, fmt.Errorf("set composing: %w", err))
 	}
 
+	// 2.5 拉 shots 列表 (同一 PG, 直接查)
+	var shotInputs []ffmpeg.ShotInput
+	if p.ProjectID != "" {
+		dbShots, err := repo.ListShotsByProject(ctx, w.d.Pool, p.ProjectID)
+		if err != nil {
+			log.Warn().Err(err).Msg("failed to load shots, fallback to test card")
+		} else {
+			for _, s := range dbShots {
+				si := ffmpeg.ShotInput{
+					ID:         s.ID,
+					DurationMs: s.DurationMs,
+				}
+				if s.Dialog != nil {
+					si.Dialog = *s.Dialog
+				}
+				if s.ImageURL != nil {
+					si.ImageURL = *s.ImageURL
+				}
+				shotInputs = append(shotInputs, si)
+			}
+		}
+	}
+
 	out, err := w.d.Renderer.Render(ctx, ffmpeg.RenderInput{
 		JobID:      p.JobID,
 		Resolution: p.Resolution,
 		Format:     p.Format,
 		WorkDir:    workDir,
 		Title:      "manju render " + p.JobID[:8],
+		Shots:      shotInputs,
 	})
 	if err != nil {
 		return w.fail(ctx, teamID, userID, jobID, fmt.Errorf("ffmpeg: %w", err))

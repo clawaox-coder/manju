@@ -1,21 +1,24 @@
 // Package ffmpeg 把 ffmpeg 子进程调用包装成可测的 Renderer.
 //
-// m1 简化: 不读 shots 表, 用 lavfi color + drawtext 生成 5s 720p 测试卡片视频.
-// 这把"worker → ffmpeg → s3" 整条链路打通, 后续 m2 替换 input 为真实
-// shots 素材即可 (concat demuxer + 各 shot 时长 + bgm 混合 + 字幕 burnin).
+// 支持两种模式:
+// 1. Shots 拼接: 下载各 shot 图片/视频 → concat demuxer → 输出视频
+// 2. Fallback: 无 shots 时生成测试卡片 (lavfi color + drawtext)
 
 package ffmpeg
 
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 )
 
 type Renderer struct {
-	Bin string // 默认 ffmpeg (PATH lookup), docker 镜像里给 /usr/bin/ffmpeg
+	Bin string
 }
 
 func New(bin string) *Renderer {
@@ -25,13 +28,21 @@ func New(bin string) *Renderer {
 	return &Renderer{Bin: bin}
 }
 
-// RenderInput 是渲染输入. 后续接 shots 拼接时扩字段.
+type ShotInput struct {
+	ID         string
+	ImageURL   string // S3 presigned URL (图片 → 静帧视频)
+	VideoURL   string // S3 presigned URL (已有视频片段)
+	DurationMs int32  // 每个 shot 的时长
+	Dialog     string // 字幕文本 (可选)
+}
+
 type RenderInput struct {
 	JobID      string
-	Resolution string // 720p / 1080p / 2k / 4k
-	Format     string // mp4 / mov / webm
-	WorkDir    string // 临时目录, worker 调前 mkdir
-	Title      string // m1 显示在测试卡片上的文本
+	Resolution string
+	Format     string
+	WorkDir    string
+	Title      string
+	Shots      []ShotInput // 有 shots 时走 concat, 无则 fallback 测试卡片
 }
 
 type RenderOutput struct {
@@ -49,11 +60,112 @@ func resolutionSize(res string) string {
 	case "4k":
 		return "3840x2160"
 	}
-	return "1280x720" // 720p / 默认
+	return "1280x720"
 }
 
-// Render 同步跑 ffmpeg, 返 (output, err). 失败返 err 含 stderr 末尾几行.
 func (r *Renderer) Render(ctx context.Context, in RenderInput) (*RenderOutput, error) {
+	if len(in.Shots) > 0 {
+		return r.renderConcat(ctx, in)
+	}
+	return r.renderTestCard(ctx, in)
+}
+
+// renderConcat 下载各 shot 素材, 生成 concat demuxer, 拼接输出.
+func (r *Renderer) renderConcat(ctx context.Context, in RenderInput) (*RenderOutput, error) {
+	size := resolutionSize(in.Resolution)
+	format := in.Format
+	if format == "" {
+		format = "mp4"
+	}
+
+	var totalMs int32
+	var segments []string
+
+	for i, shot := range in.Shots {
+		dur := shot.DurationMs
+		if dur <= 0 {
+			dur = 3000
+		}
+		totalMs += dur
+		durSec := fmt.Sprintf("%.3f", float64(dur)/1000.0)
+
+		segPath := filepath.Join(in.WorkDir, fmt.Sprintf("seg_%03d.mp4", i))
+
+		if shot.VideoURL != "" {
+			if err := downloadFile(ctx, shot.VideoURL, segPath); err != nil {
+				return nil, fmt.Errorf("download shot %d video: %w", i, err)
+			}
+		} else if shot.ImageURL != "" {
+			imgPath := filepath.Join(in.WorkDir, fmt.Sprintf("img_%03d.jpg", i))
+			if err := downloadFile(ctx, shot.ImageURL, imgPath); err != nil {
+				return nil, fmt.Errorf("download shot %d image: %w", i, err)
+			}
+			// 图片 → 静帧视频片段
+			args := []string{
+				"-y", "-loop", "1", "-i", imgPath,
+				"-c:v", "libx264", "-pix_fmt", "yuv420p",
+				"-vf", fmt.Sprintf("scale=%s:force_original_aspect_ratio=decrease,pad=%s:(ow-iw)/2:(oh-ih)/2", size, size),
+				"-t", durSec, "-preset", "ultrafast", segPath,
+			}
+			if err := runFFmpeg(ctx, r.Bin, args); err != nil {
+				return nil, fmt.Errorf("image-to-video shot %d: %w", i, err)
+			}
+		} else {
+			// 无素材: 生成纯色 + 文字占位
+			title := sanitizeTitle(shot.Dialog)
+			if title == "" {
+				title = fmt.Sprintf("Shot %d", i+1)
+			}
+			args := []string{
+				"-y", "-f", "lavfi",
+				"-i", fmt.Sprintf("color=c=0x1a1a2e:s=%s:r=24:d=%s", size, durSec),
+				"-vf", fmt.Sprintf("drawtext=fontsize=48:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2:text='%s'", title),
+				"-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "ultrafast", segPath,
+			}
+			if err := runFFmpeg(ctx, r.Bin, args); err != nil {
+				return nil, fmt.Errorf("placeholder shot %d: %w", i, err)
+			}
+		}
+		segments = append(segments, segPath)
+	}
+
+	// 写 concat demuxer 文件
+	concatPath := filepath.Join(in.WorkDir, "concat.txt")
+	var concatContent strings.Builder
+	for _, seg := range segments {
+		concatContent.WriteString(fmt.Sprintf("file '%s'\n", seg))
+	}
+	if err := os.WriteFile(concatPath, []byte(concatContent.String()), 0o644); err != nil {
+		return nil, fmt.Errorf("write concat.txt: %w", err)
+	}
+
+	// ffmpeg concat → 最终输出
+	videoPath := filepath.Join(in.WorkDir, "output."+format)
+	args := []string{
+		"-y", "-f", "concat", "-safe", "0", "-i", concatPath,
+		"-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "fast",
+		"-movflags", "+faststart", videoPath,
+	}
+	if err := runFFmpeg(ctx, r.Bin, args); err != nil {
+		return nil, fmt.Errorf("concat: %w", err)
+	}
+
+	// thumbnail (第一帧)
+	thumbPath := filepath.Join(in.WorkDir, "thumbnail.jpg")
+	thumbArgs := []string{"-y", "-i", videoPath, "-vframes", "1", "-q:v", "3", thumbPath}
+	if err := runFFmpeg(ctx, r.Bin, thumbArgs); err != nil {
+		return nil, fmt.Errorf("extract thumbnail: %w", err)
+	}
+
+	return &RenderOutput{
+		VideoPath:     videoPath,
+		ThumbnailPath: thumbPath,
+		DurationMs:    totalMs,
+	}, nil
+}
+
+// renderTestCard fallback: 无 shots 时生成测试卡片.
+func (r *Renderer) renderTestCard(ctx context.Context, in RenderInput) (*RenderOutput, error) {
 	size := resolutionSize(in.Resolution)
 	format := in.Format
 	if format == "" {
@@ -63,39 +175,23 @@ func (r *Renderer) Render(ctx context.Context, in RenderInput) (*RenderOutput, e
 
 	videoPath := filepath.Join(in.WorkDir, "output."+format)
 	thumbPath := filepath.Join(in.WorkDir, "thumbnail.jpg")
-	title := in.Title
+	title := sanitizeTitle(in.Title)
 	if title == "" {
 		title = "manju render"
 	}
-	// ffmpeg drawtext 的 text 不能有 ':' / '\' 不转义会炸. 简单只允许 ascii + 数字 +
-	// 空格 + 短横线, 其他替成下划线.
-	safeTitle := sanitizeTitle(title)
 
-	// 1. 主视频. 黑底白字, 居中, 5 秒.
-	//    用 -t 限时长, 避免 lavfi 无限流.
 	args := []string{
-		"-y",
-		"-f", "lavfi",
+		"-y", "-f", "lavfi",
 		"-i", fmt.Sprintf("color=c=black:s=%s:r=24:d=%d", size, durationSec),
-		"-vf", fmt.Sprintf("drawtext=fontsize=72:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2:text='%s'", safeTitle),
-		"-c:v", "libx264",
-		"-pix_fmt", "yuv420p",
-		"-preset", "ultrafast",
-		"-t", fmt.Sprintf("%d", durationSec),
-		videoPath,
+		"-vf", fmt.Sprintf("drawtext=fontsize=72:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2:text='%s'", title),
+		"-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "ultrafast",
+		"-t", fmt.Sprintf("%d", durationSec), videoPath,
 	}
 	if err := runFFmpeg(ctx, r.Bin, args); err != nil {
 		return nil, fmt.Errorf("render mp4: %w", err)
 	}
 
-	// 2. thumbnail (第一帧). 从生成的 mp4 抽帧.
-	thumbArgs := []string{
-		"-y",
-		"-i", videoPath,
-		"-vframes", "1",
-		"-q:v", "3",
-		thumbPath,
-	}
+	thumbArgs := []string{"-y", "-i", videoPath, "-vframes", "1", "-q:v", "3", thumbPath}
 	if err := runFFmpeg(ctx, r.Bin, thumbArgs); err != nil {
 		return nil, fmt.Errorf("extract thumbnail: %w", err)
 	}
@@ -108,7 +204,6 @@ func (r *Renderer) Render(ctx context.Context, in RenderInput) (*RenderOutput, e
 }
 
 func runFFmpeg(ctx context.Context, bin string, args []string) error {
-	// 超时由 ctx 控制. worker 调时给宽松 ctx (5 min) 避免长视频卡死.
 	cmd := exec.CommandContext(ctx, bin, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -116,6 +211,28 @@ func runFFmpeg(ctx context.Context, bin string, args []string) error {
 		return fmt.Errorf("ffmpeg exit: %v; output:\n%s", err, tail)
 	}
 	return nil
+}
+
+func downloadFile(ctx context.Context, url, dest string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("download %s: HTTP %d", url, resp.StatusCode)
+	}
+	f, err := os.Create(dest)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = io.Copy(f, resp.Body)
+	return err
 }
 
 func tailLines(s string, n int) string {
