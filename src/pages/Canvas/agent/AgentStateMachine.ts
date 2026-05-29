@@ -17,8 +17,6 @@ export const INITIAL_STATE: AgentState = {
   focusedNodeId: null,
   previousStep: null,
   history: [],
-  sceneIndex: 0,
-  totalScenes: 0,
   lastEditAction: null,
 };
 
@@ -61,34 +59,7 @@ export class AgentStateMachine {
   }
 
   selectCard(cardId: string): void {
-    if (this.state.stage === 'storyboard' && this.state.step === 'show_scene_options') {
-      const decision: Decision = {
-        stage: this.state.stage,
-        step: this.state.step,
-        chosen: cardId,
-        alternatives: [],
-        timestamp: Date.now(),
-      };
-      const history = [...this.state.history, decision];
-      const next = this.state.sceneIndex + 1;
-      if (next >= this.state.totalScenes) {
-        this.state = { ...this.state, step: 'complete', sceneIndex: next, history };
-      } else {
-        this.state = { ...this.state, step: 'generate_scene', sceneIndex: next, history };
-      }
-      return;
-    }
     this.selectOption(cardId);
-  }
-
-  setTotalScenes(total: number): void {
-    this.state = { ...this.state, totalScenes: total };
-  }
-
-  showSceneOptions(): void {
-    if (this.state.stage === 'storyboard' && this.state.step === 'generate_scene') {
-      this.state = { ...this.state, step: 'show_scene_options' };
-    }
   }
 
   showScriptOptions(): void {
@@ -106,6 +77,12 @@ export class AgentStateMachine {
   proceedToVoice(): void {
     if (this.state.stage === 'storyboard' && this.state.step === 'complete') {
       this.state = { ...this.state, stage: 'voice', step: 'offer' };
+    }
+  }
+
+  completeStoryboard(): void {
+    if (this.state.stage === 'storyboard') {
+      this.state = { ...this.state, step: 'complete' };
     }
   }
 
@@ -135,14 +112,7 @@ export class AgentStateMachine {
 
   confirm(): void {
     if (this.state.stage === 'script' && this.state.step === 'expand') {
-      this.state = { ...this.state, stage: 'storyboard', step: 'generate_scene', sceneIndex: 0 };
-    } else if (this.state.stage === 'storyboard' && this.state.step === 'show_scene_options') {
-      const next = this.state.sceneIndex + 1;
-      if (next >= this.state.totalScenes) {
-        this.state = { ...this.state, stage: 'storyboard', step: 'complete', sceneIndex: next };
-      } else {
-        this.state = { ...this.state, step: 'generate_scene', sceneIndex: next };
-      }
+      this.state = { ...this.state, stage: 'storyboard', step: 'generate_scene' };
     }
   }
 

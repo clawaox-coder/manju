@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ReactFlow,
   Background,
@@ -26,10 +26,10 @@ import { AgentIntentRouter } from './agent/AgentIntentRouter';
 import { getAgentMessage, makeUserMessage } from './agent/AgentMessages';
 import type { ChatMessage } from './agent/types';
 import { useStore } from '@/store';
-import { useScript, useShots } from '@/hooks/useScriptApi';
+import { useScript, useShots, useUpdateScript } from '@/hooks/useScriptApi';
 import { useAssets } from '@/hooks/useAssetApi';
 import { useProjects } from '@/hooks/useProjectApi';
-import { voiceMatch } from '@/lib/api/ai';
+import { voiceMatch, streamScriptContinue, storyboardGenerate, getAiTask } from '@/lib/api/ai';
 import { createRender, getRender } from '@/lib/api/render';
 import { buildCanvasGraph } from './buildGraph';
 
@@ -65,6 +65,32 @@ async function pollRender(jobId: string, onSlow: () => void): Promise<{ ok: bool
   }
 }
 
+const AI_TASK_TERMINAL = ['done', 'succeeded', 'failed', 'error'];
+const AI_TASK_POLL_MS = 2000;
+const AI_TASK_TIMEOUT_MS = 90000;
+
+// Consume an SSE script-continue stream into its full text.
+async function genOutline(projectId: string, instruction: string): Promise<string> {
+  let full = '';
+  for await (const evt of streamScriptContinue({ project_id: projectId, context: '', instruction })) {
+    if (evt.event === 'delta') full += (evt.data as { text?: string }).text ?? '';
+  }
+  return full.trim();
+}
+
+// Poll an async AI task (e.g. storyboard.generate) until terminal or timeout.
+async function pollAiTask(taskId: string): Promise<boolean> {
+  const start = Date.now();
+  for (;;) {
+    if (Date.now() - start > AI_TASK_TIMEOUT_MS) return false;
+    const task = await getAiTask(taskId);
+    if (AI_TASK_TERMINAL.includes(task.status)) {
+      return task.status === 'done' || task.status === 'succeeded';
+    }
+    await new Promise((r) => setTimeout(r, AI_TASK_POLL_MS));
+  }
+}
+
 function CanvasInner() {
   const projectId = useStore((s) => s.projectId);
   const projectName = useStore((s) => s.projectName);
@@ -72,8 +98,9 @@ function CanvasInner() {
   const setProjectName = useStore((s) => s.setProjectName);
   const { data: projects } = useProjects({ pageSize: 10 });
   const { data: script } = useScript(projectId ?? undefined);
-  const { data: shots } = useShots(projectId ?? undefined);
+  const { data: shots, refetch: refetchShots } = useShots(projectId ?? undefined);
   const { data: characters } = useAssets({ type: 'character' });
+  const updateScript = useUpdateScript(projectId ?? '');
 
   // Agent state machine (stable singleton instances)
   const [sm] = useState(() => new AgentStateMachine());
@@ -84,6 +111,9 @@ function CanvasInner() {
   // Holds the chosen candidate id during the exit-animation window so unchosen
   // candidates can fade out before the state machine advances and removes them.
   const [selection, setSelection] = useState<{ selectedId: string } | null>(null);
+  // Real AI-generated script outline candidates + the chosen one (for expand/save).
+  const [scriptCandidates, setScriptCandidates] = useState<{ title: string; content: string }[]>([]);
+  const [selectedScript, setSelectedScript] = useState<string>('');
 
   const syncState = useCallback(() => setAgentState({ ...sm.state }), [sm]);
 
@@ -124,32 +154,73 @@ function CanvasInner() {
     }
   }, [agentState.stage, agentState.step, sm, syncState, shots]);
 
-  // Reveal script option candidates after "generation".
-  // (Placeholder timing stands in for the AI options call; candidates carry
-  // placeholder content until that API is wired.)
+  // Generate 3 real script-outline candidates (parallel) from the idea context,
+  // then reveal them on the canvas for selection.
+  const scriptGenStartedRef = useRef(false);
   useEffect(() => {
-    if (agentState.stage !== 'script' || agentState.step !== 'generate') return;
-    const t = window.setTimeout(() => {
-      sm.showScriptOptions();
-      syncState();
-    }, 900);
-    return () => window.clearTimeout(t);
-  }, [agentState.stage, agentState.step, sm, syncState]);
+    if (agentState.stage !== 'script' || agentState.step !== 'generate' || !projectId) return;
+    if (scriptGenStartedRef.current) return;
+    scriptGenStartedRef.current = true;
+    let cancelled = false;
+    (async () => {
+      const { type = '漫剧', style = '日系动漫', tone, duration = '1分钟', audience = '年轻人' } = sm.state.ideaContext;
+      const base = `用${type}形式、${style}风格创作一个短剧大纲（约${duration}，受众${audience}${tone ? `，${tone}基调` : ''}）。直接给出分场景大纲。`;
+      const dirs = [
+        { title: '强冲突反转', extra: '走强冲突、结尾反转路线。' },
+        { title: '轻松日常', extra: '走轻松幽默的日常喜剧路线。' },
+        { title: '细腻情感', extra: '走细腻情感、人物弧光路线。' },
+      ];
+      try {
+        const outlines = await Promise.all(dirs.map((d) => genOutline(projectId, base + d.extra)));
+        if (cancelled) return;
+        setScriptCandidates(outlines.map((c, i) => ({ title: dirs[i].title, content: c || '（生成为空）' })));
+        sm.showScriptOptions();
+        syncState();
+      } catch {
+        if (cancelled) return;
+        setMessages((m) => [...m, { id: `msg-sgerr-${Date.now()}`, role: 'ai' as const, type: 'action' as const, text: '生成剧本时出错了。', action: { label: '重试生成', description: '点击重新生成剧本方向', icon: '↻' }, timestamp: Date.now() }]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [agentState.stage, agentState.step, projectId, sm, syncState]);
 
-  // Reveal storyboard scene candidates after "generation", looping per scene.
+  // Reset the script-generation guard when leaving the generate step.
   useEffect(() => {
-    if (agentState.stage !== 'storyboard' || agentState.step !== 'generate_scene') return;
-    if (agentState.totalScenes === 0) {
-      const count = Math.max(1, script?.content?.match(/^#{1,3}\s/gm)?.length ?? 3);
-      sm.setTotalScenes(count);
-      syncState(); // eslint-disable-line react-hooks/set-state-in-effect
+    if (!(agentState.stage === 'script' && agentState.step === 'generate')) {
+      scriptGenStartedRef.current = false;
     }
-    const t = window.setTimeout(() => {
-      sm.showSceneOptions();
-      syncState();
-    }, 900);
-    return () => window.clearTimeout(t);
-  }, [agentState.stage, agentState.step, agentState.totalScenes, sm, syncState, script]);
+  }, [agentState.stage, agentState.step]);
+
+  // Run the real storyboard generation (single style) on entering storyboard.
+  const storyboardGenStartedRef = useRef(false);
+  useEffect(() => {
+    if (agentState.stage !== 'storyboard' || agentState.step !== 'generate_scene' || !projectId) return;
+    if (storyboardGenStartedRef.current) return;
+    storyboardGenStartedRef.current = true;
+    let cancelled = false;
+    (async () => {
+      try {
+        const style = sm.state.ideaContext.style ?? 'default';
+        const res = await storyboardGenerate({ project_id: projectId, style, regenerate_all: true });
+        const ok = await pollAiTask(res.task_id);
+        if (cancelled) return;
+        if (!ok) throw new Error('storyboard task failed');
+        await refetchShots();
+        sm.completeStoryboard();
+        syncState();
+      } catch {
+        if (cancelled) return;
+        setMessages((m) => [...m, { id: `msg-sberr-${Date.now()}`, role: 'ai' as const, type: 'action' as const, text: '生成分镜时出错了。', action: { label: '重试生成', description: '点击重新生成分镜', icon: '↻' }, timestamp: Date.now() }]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [agentState.stage, agentState.step, projectId, sm, syncState, refetchShots]);
+
+  useEffect(() => {
+    if (!(agentState.stage === 'storyboard' && agentState.step === 'generate_scene')) {
+      storyboardGenStartedRef.current = false;
+    }
+  }, [agentState.stage, agentState.step]);
 
   // Handle option selection
   const handleSelectOption = useCallback((value: string) => {
@@ -202,9 +273,25 @@ function CanvasInner() {
     }
   }, [syncState, sm, router]);
 
-  // Handle action (voice/video one-click)
+  // Handle action (script confirm / voice / video one-click)
   const handleAction = useCallback(async (action: string) => {
     if (!projectId || loading) return;
+
+    if (sm.state.stage === 'script' && sm.state.step === 'expand') {
+      setMessages((m) => [...m, makeUserMessage(action)]);
+      setLoading(true);
+      try {
+        await updateScript.mutateAsync({ content: selectedScript, expected_version_no: script?.version_no ?? 0 });
+        sm.confirm(); // expand → storyboard/generate_scene
+        syncState();
+        setMessages((m) => [...m, msg('ai', '✅ 剧本已保存，开始生成分镜...'), getAgentMessage(sm.state)]);
+      } catch {
+        setMessages((m) => [...m, { id: `msg-saverr-${Date.now()}`, role: 'ai' as const, type: 'action' as const, text: '保存剧本失败。', action: { label: '重试保存', description: '点击重新保存', icon: '↻' }, timestamp: Date.now() }]);
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
 
     if (sm.state.stage === 'voice') {
       sm.startVoiceMatch();
@@ -252,23 +339,24 @@ function CanvasInner() {
       }
       return;
     }
-  }, [projectId, loading, script, sm, syncState]);
+  }, [projectId, loading, script, sm, syncState, updateScript, selectedScript]);
 
-  // Node click → either candidate selection (with fade-out) or B-mode focus
+  // Node click → either script candidate selection (with fade-out) or B-mode focus
   const handleNodeClick = useCallback((_: unknown, node: Node) => {
     const isCandidate = node.id.startsWith('candidate-');
-    const inSelectionStep =
-      (sm.state.stage === 'script' && sm.state.step === 'show_options') ||
-      (sm.state.stage === 'storyboard' && sm.state.step === 'show_scene_options');
+    const inSelectionStep = sm.state.stage === 'script' && sm.state.step === 'show_options';
 
     if (isCandidate) {
       if (!inSelectionStep || selection) return; // ignore stray clicks / mid-animation
+      const idx = parseInt(node.id.match(/(\d+)$/)?.[1] ?? '0', 10);
+      const chosen = scriptCandidates[idx]?.content ?? '';
       setSelection({ selectedId: node.id });
       window.setTimeout(() => {
+        setSelectedScript(chosen);
         sm.selectCard(node.id);
         syncState();
         setSelection(null);
-        setMessages((m) => [...m, getAgentMessage(sm.state)]);
+        setMessages((m) => [...m, getAgentMessage(sm.state, { scriptPreview: chosen })]);
       }, EXIT_DURATION_S * 1000 + 60);
       return;
     }
@@ -276,7 +364,7 @@ function CanvasInner() {
     sm.focusNode(node.id);
     syncState();
     setMessages((m) => [...m, getAgentMessage(sm.state, { focusedNodeLabel: (node.data as { title?: string }).title ?? node.id })]);
-  }, [sm, syncState, selection]);
+  }, [sm, syncState, selection, scriptCandidates]);
 
   const handleExitContext = useCallback(() => {
     sm.exitFocus();
@@ -284,27 +372,19 @@ function CanvasInner() {
     setMessages((m) => [...m, { id: `msg-exit-${Date.now()}`, role: 'system' as const, type: 'context-switch' as const, text: '↩ 返回主线', timestamp: Date.now() }]);
   }, [syncState, sm]);
 
-  // Compute candidate nodes for selection steps. During the exit window
-  // (selection set), the chosen node becomes 'selected' and the rest 'leaving'.
+  // Compute candidate nodes for the script selection step. During the exit
+  // window (selection set), the chosen node becomes 'selected', rest 'leaving'.
   const candidateNodes = useMemo(() => {
+    if (agentState.stage !== 'script' || agentState.step !== 'show_options') return undefined;
     const statusFor = (cid: string): 'candidate' | 'selected' | 'leaving' => {
       if (!selection) return 'candidate';
       return cid === selection.selectedId ? 'selected' : 'leaving';
     };
-    if (agentState.stage === 'script' && agentState.step === 'show_options') {
-      return [0, 1, 2].map((i) => {
-        const cid = `candidate-script-${i}`;
-        return { id: cid, type: 'script', data: { sceneNumber: i + 1, title: `方案 ${i + 1}`, content: '', nodeStatus: statusFor(cid) } };
-      });
-    }
-    if (agentState.stage === 'storyboard' && agentState.step === 'show_scene_options') {
-      return [0, 1, 2].map((i) => {
-        const cid = `candidate-shot-${agentState.sceneIndex}-${i}`;
-        return { id: cid, type: 'storyboard', data: { shotNumber: agentState.sceneIndex + 1, title: `镜头 ${agentState.sceneIndex + 1}`, dialog: '', style: ['日系动漫', '美漫', '水墨'][i], nodeStatus: statusFor(cid) } };
-      });
-    }
-    return undefined;
-  }, [agentState.stage, agentState.step, agentState.sceneIndex, selection]);
+    return scriptCandidates.map((c, i) => {
+      const cid = `candidate-script-${i}`;
+      return { id: cid, type: 'script', data: { sceneNumber: i + 1, title: c.title, content: c.content, nodeStatus: statusFor(cid) } };
+    });
+  }, [agentState.stage, agentState.step, selection, scriptCandidates]);
 
   // Build graph
   const graph = useMemo(

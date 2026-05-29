@@ -54,31 +54,14 @@ describe('AgentStateMachine', () => {
     expect(sm.state.step).toBe('generate_scene');
   });
 
-  it('loops through storyboard scenes and completes', () => {
+  it('storyboard generates as a whole then completes', () => {
     const sm = new AgentStateMachine();
     sm.restore({ hasScript: true, hasShots: false, hasVoice: false, hasVideo: false });
-    sm.setTotalScenes(3);
-    expect(sm.state.totalScenes).toBe(3);
-
-    // scene 0
-    sm.showSceneOptions();
-    expect(sm.state.step).toBe('show_scene_options');
-    sm.selectCard('style-a');
-    expect(sm.state.sceneIndex).toBe(1);
+    expect(sm.state.stage).toBe('storyboard');
     expect(sm.state.step).toBe('generate_scene');
 
-    // scene 1
-    sm.showSceneOptions();
-    sm.selectCard('style-b');
-    expect(sm.state.sceneIndex).toBe(2);
-    expect(sm.state.step).toBe('generate_scene');
-
-    // scene 2 (last)
-    sm.showSceneOptions();
-    sm.selectCard('style-c');
-    expect(sm.state.sceneIndex).toBe(3);
+    sm.completeStoryboard();
     expect(sm.state.step).toBe('complete');
-    expect(sm.state.history).toHaveLength(3);
   });
 
   it('records edit action in B mode', () => {
@@ -112,11 +95,9 @@ describe('AgentStateMachine', () => {
   it('advances storyboard complete → voice → video → done', () => {
     const sm = new AgentStateMachine();
     sm.restore({ hasScript: true, hasShots: false, hasVoice: false, hasVideo: false });
-    sm.setTotalScenes(1);
 
-    // finish the one scene → complete
-    sm.showSceneOptions();
-    sm.selectCard('style-a');
+    // whole-storyboard generation → complete
+    sm.completeStoryboard();
     expect(sm.state.step).toBe('complete');
 
     // complete → voice offer

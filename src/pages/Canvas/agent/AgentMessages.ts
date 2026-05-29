@@ -5,6 +5,7 @@ interface MessageContext {
   scriptScenes?: number;
   shotCount?: number;
   focusedNodeLabel?: string;
+  scriptPreview?: string;
 }
 
 let msgCounter = 0;
@@ -69,7 +70,7 @@ export function getAgentMessage(state: AgentState, ctx?: MessageContext): ChatMe
     case 'script':
       return getScriptMessage(state, ctx);
     case 'storyboard':
-      return getStoryboardMessage(state, ctx);
+      return getStoryboardMessage(state);
     case 'voice':
       return getVoiceMessage(state, ctx);
     case 'video':
@@ -119,48 +120,30 @@ function getIdeaMessage(state: AgentState): ChatMessage {
 }
 
 function getScriptMessage(state: AgentState, ctx?: MessageContext): ChatMessage {
-  if (ctx?.projectName && ctx.scriptScenes && state.step === 'generate_scene') {
-    return makeMsg({
-      type: 'card-group',
-      text: `欢迎回来！「${ctx.projectName}」的进度：\n✅ 剧本 — ${ctx.scriptScenes} 场\n⬜ 分镜 — 未开始`,
-      cards: [
-        { id: 'continue', title: '继续', description: '生成分镜', emoji: '▶️' },
-        { id: 'adjust', title: '调整剧本', description: '回到剧本编辑', emoji: '✏️' },
-        { id: 'restart', title: '从头来过', description: '重新开始创作', emoji: '🔄' },
-      ],
-    });
-  }
   switch (state.step) {
     case 'generate':
       return makeMsg({ type: 'progress', text: '正在构思剧本方向...', progress: { current: 0, total: 3, label: '生成中' } });
     case 'show_options':
       return makeMsg({ type: 'text', text: '为你准备了 3 个剧本方向，已放到画布上 👉 点选你喜欢的那个。' });
-    case 'expand':
-      return makeMsg({ type: 'preview', text: '剧本已展开，确认后继续生成分镜：' });
+    case 'expand': {
+      const preview = (ctx?.scriptPreview ?? '').slice(0, 160);
+      return makeMsg({
+        type: 'action',
+        text: preview ? `已选定这个方向：\n\n${preview}${preview.length >= 160 ? '…' : ''}` : '已选定剧本方向。',
+        action: { label: '确认剧本', description: '保存并开始生成分镜', icon: '✅' },
+      });
+    }
     default:
       return makeMsg({ type: 'text', text: '继续创作剧本...' });
   }
 }
 
-function getStoryboardMessage(state: AgentState, ctx?: MessageContext): ChatMessage {
-  if (ctx?.projectName && !ctx.shotCount && state.step === 'generate_scene') {
-    return makeMsg({
-      type: 'card-group',
-      text: `欢迎回来！「${ctx.projectName}」的进度：\n✅ 剧本 — ${ctx.scriptScenes ?? 0} 场\n⬜ 分镜 — 未开始`,
-      cards: [
-        { id: 'continue', title: '继续', description: '生成分镜', emoji: '▶️' },
-        { id: 'adjust', title: '调整剧本', description: '回到剧本编辑', emoji: '✏️' },
-        { id: 'restart', title: '从头来过', description: '重新开始创作', emoji: '🔄' },
-      ],
-    });
-  }
+function getStoryboardMessage(state: AgentState): ChatMessage {
   switch (state.step) {
     case 'generate_scene':
-      return makeMsg({ type: 'progress', text: `🎨 正在绘制第 ${state.sceneIndex + 1} 个镜头...`, progress: { current: state.sceneIndex, total: state.totalScenes, label: '生成分镜' } });
-    case 'show_scene_options':
-      return makeMsg({ type: 'text', text: `镜头 ${state.sceneIndex + 1} 有 3 种风格方案，画布上点选一个 👉` });
+      return makeMsg({ type: 'progress', text: '🎨 正在生成分镜...', progress: { current: 0, total: 1, label: '生成分镜' } });
     case 'complete':
-      return makeMsg({ type: 'text', text: '🎉 分镜全部完成！接下来可以配音或直接生成视频。' });
+      return makeMsg({ type: 'text', text: '🎉 分镜已生成！接下来可以配音或直接生成视频。' });
     default:
       return makeMsg({ type: 'text', text: '继续生成分镜...' });
   }
