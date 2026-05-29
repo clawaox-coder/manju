@@ -20,6 +20,7 @@ import { useProjects, useDeleteProject, useDuplicateProject } from '@/hooks/useP
 import { useConfirm } from '@/hooks/useConfirm';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { useStore } from '@/store';
 import type { Project } from '@/types';
 
 const STATUS_FILTERS = [

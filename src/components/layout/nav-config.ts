@@ -19,6 +19,7 @@ import {
   CreditCard,
   Key,
   HelpCircle,
+  Workflow,
   type LucideIcon
 } from 'lucide-react';
 
@@ -49,6 +50,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'AI 创作',
     items: [
       { key: 'script', to: '/script', label: '剧本创作', icon: Pencil, dot: true },
+      { key: 'canvas', to: '/canvas', label: '创作画布', icon: Workflow },
       { key: 'storyboard', to: '/storyboard', label: 'AI 生成分镜', icon: LayoutGrid },
       { key: 'consistency', to: '/consistency', label: '角色一致性', icon: UserCheck },
       { key: 'voice', to: '/voice', label: '配音与对白', icon: Mic },

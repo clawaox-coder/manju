@@ -10,6 +10,7 @@ const Projects = lazyWithRetry(() => import('@/pages/Projects'));
 const Script = lazyWithRetry(() => import('@/pages/Script'));
 const Storyboard = lazyWithRetry(() => import('@/pages/Storyboard'));
 const Video = lazyWithRetry(() => import('@/pages/Video'));
+const Canvas = lazyWithRetry(() => import('@/pages/Canvas'));
 const Characters = lazyWithRetry(() => import('@/pages/Characters'));
 const Scenes = lazyWithRetry(() => import('@/pages/Scenes'));
 const Props = lazyWithRetry(() => import('@/pages/Props'));
@@ -90,7 +91,8 @@ const router = createBrowserRouter([
       { path: 'team', element: lazyEl(Team) },
       { path: 'billing', element: lazyEl(Billing) },
       { path: 'apikeys', element: lazyEl(ApiKeys) },
-      { path: 'help', element: lazyEl(Help) }
+      { path: 'help', element: lazyEl(Help) },
+      { path: 'canvas', element: lazyEl(Canvas) }
     ]
   }
 ]);

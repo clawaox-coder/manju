@@ -39,3 +39,7 @@ bin/
 *.test
 *.out
 coverage.out
+
+# Playwright e2e output
+test-results/
+playwright-report/
