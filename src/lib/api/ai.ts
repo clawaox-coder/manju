@@ -159,3 +159,29 @@ export async function classifyIntent(input: IntentClassifyInput): Promise<Intent
     base: AI_BASE,
   });
 }
+
+// ---- Voice Match ----
+
+export interface VoiceMatchInput {
+  project_id: string;
+  content: string;
+  auto_assign?: boolean;
+}
+
+export interface VoiceMatchEntry {
+  character_name: string;
+  voice_profile: { gender: string; age: string; tone: string };
+  confidence: number;
+}
+
+export interface VoiceMatchResult {
+  matches: VoiceMatchEntry[];
+}
+
+export async function voiceMatch(input: VoiceMatchInput): Promise<VoiceMatchResult> {
+  return request<VoiceMatchResult>('/v1/ai/voice/match', {
+    method: 'POST',
+    body: input,
+    base: AI_BASE,
+  });
+}

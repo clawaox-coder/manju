@@ -20,6 +20,7 @@ import { ChatPanel } from './chat/ChatPanel';
 import { EmptyState } from './canvas/EmptyState';
 import { useCanvasLayout } from './canvas/useCanvasLayout';
 import { useContextFocus } from './canvas/useContextFocus';
+import { EXIT_DURATION_S } from './canvas/nodeMotion';
 import { AgentStateMachine } from './agent/AgentStateMachine';
 import { AgentIntentRouter } from './agent/AgentIntentRouter';
 import { getAgentMessage, makeUserMessage } from './agent/AgentMessages';
@@ -28,6 +29,8 @@ import { useStore } from '@/store';
 import { useScript, useShots } from '@/hooks/useScriptApi';
 import { useAssets } from '@/hooks/useAssetApi';
 import { useProjects } from '@/hooks/useProjectApi';
+import { voiceMatch } from '@/lib/api/ai';
+import { createRender, getRender } from '@/lib/api/render';
 import { buildCanvasGraph } from './buildGraph';
 
 const nodeTypes = {
@@ -37,6 +40,30 @@ const nodeTypes = {
   video: VideoNode,
   character: CharacterNode,
 };
+
+type Role = 'ai' | 'system';
+function msg(role: Role, text: string): ChatMessage {
+  return { id: `msg-${role}-${Date.now()}-${Math.round(Math.random() * 1e6)}`, role, type: 'text', text, timestamp: Date.now() };
+}
+
+const RENDER_TERMINAL = ['done', 'failed', 'cancelled'];
+const RENDER_POLL_MS = 2000;
+const RENDER_TIMEOUT_MS = 120000;
+
+// Poll render job until terminal or timeout. onSlow fires once if it exceeds 30s.
+async function pollRender(jobId: string, onSlow: () => void): Promise<{ ok: boolean; url: string | null }> {
+  const start = Date.now();
+  let warnedSlow = false;
+  for (;;) {
+    if (Date.now() - start > RENDER_TIMEOUT_MS) return { ok: false, url: null };
+    if (!warnedSlow && Date.now() - start > 30000) { warnedSlow = true; onSlow(); }
+    const job = await getRender(jobId);
+    if (RENDER_TERMINAL.includes(job.status)) {
+      return { ok: job.status === 'done', url: job.result_url };
+    }
+    await new Promise((r) => setTimeout(r, RENDER_POLL_MS));
+  }
+}
 
 function CanvasInner() {
   const projectId = useStore((s) => s.projectId);
@@ -54,6 +81,9 @@ function CanvasInner() {
   const [agentState, setAgentState] = useState(sm.state);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(false);
+  // Holds the chosen candidate id during the exit-animation window so unchosen
+  // candidates can fade out before the state machine advances and removes them.
+  const [selection, setSelection] = useState<{ selectedId: string } | null>(null);
 
   const syncState = useCallback(() => setAgentState({ ...sm.state }), [sm]);
 
@@ -77,13 +107,49 @@ function CanvasInner() {
       sm.advance();
     }
     syncState(); // eslint-disable-line react-hooks/set-state-in-effect
-    const msg = getAgentMessage(sm.state, {
+    const initMsg = getAgentMessage(sm.state, {
       projectName,
       scriptScenes: script?.content?.split(/^#{1,3}\s/m).length ?? 0,
       shotCount: shots?.length ?? 0,
     });
-    setMessages([msg]);
+    setMessages([initMsg]);
   }, [projectId, script, shots, projectName, syncState, sm]);
+
+  // Auto-advance storyboard/complete → voice offer
+  useEffect(() => {
+    if (agentState.stage === 'storyboard' && agentState.step === 'complete') {
+      sm.proceedToVoice();
+      syncState(); // eslint-disable-line react-hooks/set-state-in-effect
+      setMessages((m) => [...m, getAgentMessage(sm.state, { shotCount: shots?.length ?? 0 })]);
+    }
+  }, [agentState.stage, agentState.step, sm, syncState, shots]);
+
+  // Reveal script option candidates after "generation".
+  // (Placeholder timing stands in for the AI options call; candidates carry
+  // placeholder content until that API is wired.)
+  useEffect(() => {
+    if (agentState.stage !== 'script' || agentState.step !== 'generate') return;
+    const t = window.setTimeout(() => {
+      sm.showScriptOptions();
+      syncState();
+    }, 900);
+    return () => window.clearTimeout(t);
+  }, [agentState.stage, agentState.step, sm, syncState]);
+
+  // Reveal storyboard scene candidates after "generation", looping per scene.
+  useEffect(() => {
+    if (agentState.stage !== 'storyboard' || agentState.step !== 'generate_scene') return;
+    if (agentState.totalScenes === 0) {
+      const count = Math.max(1, script?.content?.match(/^#{1,3}\s/gm)?.length ?? 3);
+      sm.setTotalScenes(count);
+      syncState(); // eslint-disable-line react-hooks/set-state-in-effect
+    }
+    const t = window.setTimeout(() => {
+      sm.showSceneOptions();
+      syncState();
+    }, 900);
+    return () => window.clearTimeout(t);
+  }, [agentState.stage, agentState.step, agentState.totalScenes, sm, syncState, script]);
 
   // Handle option selection
   const handleSelectOption = useCallback((value: string) => {
@@ -137,23 +203,80 @@ function CanvasInner() {
   }, [syncState, sm, router]);
 
   // Handle action (voice/video one-click)
-  const handleAction = useCallback((action: string) => {
-    // Phase 3 wires the actual voice.match / render API calls.
-    setMessages((m) => [...m, {
-      id: `msg-act-${Date.now()}`,
-      role: 'ai' as const,
-      type: 'text' as const,
-      text: `已触发「${action}」，正在处理...`,
-      timestamp: Date.now(),
-    }]);
-  }, []);
+  const handleAction = useCallback(async (action: string) => {
+    if (!projectId || loading) return;
 
-  // Node click → B mode
+    if (sm.state.stage === 'voice') {
+      sm.startVoiceMatch();
+      syncState();
+      setMessages((m) => [...m, makeUserMessage(action), getAgentMessage(sm.state)]);
+      setLoading(true);
+      try {
+        const res = await voiceMatch({ project_id: projectId, content: script?.content ?? '', auto_assign: true });
+        sm.completeVoice();
+        syncState();
+        const n = res.matches?.length ?? 0;
+        setMessages((m) => [...m, msg('ai', `✅ 已为 ${n} 个角色匹配配音。`), getAgentMessage(sm.state)]);
+      } catch {
+        setMessages((m) => [...m, { id: `msg-verr-${Date.now()}`, role: 'ai' as const, type: 'action' as const, text: '配音匹配失败。', action: { label: '重试配音', description: '点击重新匹配', icon: '↻' }, timestamp: Date.now() }]);
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    if (sm.state.stage === 'video') {
+      sm.startRender();
+      syncState();
+      setMessages((m) => [...m, makeUserMessage(action), getAgentMessage(sm.state)]);
+      setLoading(true);
+      try {
+        const job = await createRender(
+          { project_id: projectId, resolution: '1080p', format: 'mp4' },
+          `render-${projectId}-${Date.now()}`,
+        );
+        const result = await pollRender(job.job_id, () => {
+          setMessages((m) => [...m, msg('ai', '比预期久一点，还在渲染中...')]);
+        });
+        if (result.ok) {
+          sm.completeRender();
+          syncState();
+          setMessages((m) => [...m, getAgentMessage(sm.state)]);
+        } else {
+          throw new Error('render failed');
+        }
+      } catch {
+        setMessages((m) => [...m, { id: `msg-rerr-${Date.now()}`, role: 'ai' as const, type: 'action' as const, text: '渲染遇到问题。', action: { label: '重试渲染', description: '点击重新生成视频', icon: '↻' }, timestamp: Date.now() }]);
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+  }, [projectId, loading, script, sm, syncState]);
+
+  // Node click → either candidate selection (with fade-out) or B-mode focus
   const handleNodeClick = useCallback((_: unknown, node: Node) => {
+    const isCandidate = node.id.startsWith('candidate-');
+    const inSelectionStep =
+      (sm.state.stage === 'script' && sm.state.step === 'show_options') ||
+      (sm.state.stage === 'storyboard' && sm.state.step === 'show_scene_options');
+
+    if (isCandidate) {
+      if (!inSelectionStep || selection) return; // ignore stray clicks / mid-animation
+      setSelection({ selectedId: node.id });
+      window.setTimeout(() => {
+        sm.selectCard(node.id);
+        syncState();
+        setSelection(null);
+        setMessages((m) => [...m, getAgentMessage(sm.state)]);
+      }, EXIT_DURATION_S * 1000 + 60);
+      return;
+    }
+
     sm.focusNode(node.id);
     syncState();
     setMessages((m) => [...m, getAgentMessage(sm.state, { focusedNodeLabel: (node.data as { title?: string }).title ?? node.id })]);
-  }, [syncState, sm]);
+  }, [sm, syncState, selection]);
 
   const handleExitContext = useCallback(() => {
     sm.exitFocus();
@@ -161,24 +284,27 @@ function CanvasInner() {
     setMessages((m) => [...m, { id: `msg-exit-${Date.now()}`, role: 'system' as const, type: 'context-switch' as const, text: '↩ 返回主线', timestamp: Date.now() }]);
   }, [syncState, sm]);
 
-  // Compute candidate nodes for selection steps
+  // Compute candidate nodes for selection steps. During the exit window
+  // (selection set), the chosen node becomes 'selected' and the rest 'leaving'.
   const candidateNodes = useMemo(() => {
+    const statusFor = (cid: string): 'candidate' | 'selected' | 'leaving' => {
+      if (!selection) return 'candidate';
+      return cid === selection.selectedId ? 'selected' : 'leaving';
+    };
     if (agentState.stage === 'script' && agentState.step === 'show_options') {
-      return [0, 1, 2].map((i) => ({
-        id: `candidate-script-${i}`,
-        type: 'script',
-        data: { sceneNumber: i + 1, title: `方案 ${i + 1}`, content: '' },
-      }));
+      return [0, 1, 2].map((i) => {
+        const cid = `candidate-script-${i}`;
+        return { id: cid, type: 'script', data: { sceneNumber: i + 1, title: `方案 ${i + 1}`, content: '', nodeStatus: statusFor(cid) } };
+      });
     }
     if (agentState.stage === 'storyboard' && agentState.step === 'show_scene_options') {
-      return [0, 1, 2].map((i) => ({
-        id: `candidate-shot-${agentState.sceneIndex}-${i}`,
-        type: 'storyboard',
-        data: { shotNumber: agentState.sceneIndex + 1, title: `镜头 ${agentState.sceneIndex + 1}`, dialog: '', style: ['日系动漫', '美漫', '水墨'][i] },
-      }));
+      return [0, 1, 2].map((i) => {
+        const cid = `candidate-shot-${agentState.sceneIndex}-${i}`;
+        return { id: cid, type: 'storyboard', data: { shotNumber: agentState.sceneIndex + 1, title: `镜头 ${agentState.sceneIndex + 1}`, dialog: '', style: ['日系动漫', '美漫', '水墨'][i], nodeStatus: statusFor(cid) } };
+      });
     }
     return undefined;
-  }, [agentState.stage, agentState.step, agentState.sceneIndex]);
+  }, [agentState.stage, agentState.step, agentState.sceneIndex, selection]);
 
   // Build graph
   const graph = useMemo(

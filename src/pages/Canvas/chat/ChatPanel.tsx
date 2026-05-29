@@ -22,11 +22,23 @@ export function ChatPanel({
 }: ChatPanelProps) {
   const [input, setInput] = useState('');
   const [collapsedThinking, setCollapsedThinking] = useState<Set<string>>(new Set());
+  const [online, setOnline] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages]);
+
+  useEffect(() => {
+    const update = () => setOnline(navigator.onLine);
+    update();
+    window.addEventListener('online', update);
+    window.addEventListener('offline', update);
+    return () => {
+      window.removeEventListener('online', update);
+      window.removeEventListener('offline', update);
+    };
+  }, []);
 
   const handleSend = () => {
     if (!input.trim()) return;
@@ -36,6 +48,11 @@ export function ChatPanel({
 
   return (
     <div className="w-[340px] border-l border-border flex flex-col bg-card/50 backdrop-blur">
+      {!online && (
+        <div className="px-4 py-2 bg-amber-500/10 border-b border-amber-500/30 text-center">
+          <span className="text-xs text-amber-700 dark:text-amber-400">网络已断开，恢复后将自动重连</span>
+        </div>
+      )}
       {contextIndicator && (
         <div className="px-4 py-2 bg-primary/5 border-b border-primary/20 flex items-center justify-between">
           <span className="text-xs text-primary">{contextIndicator}</span>
@@ -103,13 +120,13 @@ export function ChatPanel({
         <div className="flex items-center gap-2 bg-muted rounded-xl px-3 py-2">
           <input
             className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
-            placeholder="说点什么..."
+            placeholder={online ? '说点什么...' : '网络已断开...'}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-            disabled={loading}
+            disabled={loading || !online}
           />
-          <button className="text-xs text-primary font-medium disabled:opacity-40" onClick={handleSend} disabled={!input.trim() || loading}>
+          <button className="text-xs text-primary font-medium disabled:opacity-40" onClick={handleSend} disabled={!input.trim() || loading || !online}>
             发送
           </button>
         </div>

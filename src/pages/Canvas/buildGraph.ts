@@ -171,7 +171,7 @@ export function buildCanvasGraph(
         id: cn.id,
         type: cn.type,
         position: { x: 0, y: 0 },
-        data: { ...cn.data, nodeStatus: 'candidate' },
+        data: { nodeStatus: 'candidate', ...cn.data },
       });
     });
   }

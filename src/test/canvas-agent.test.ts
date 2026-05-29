@@ -108,4 +108,44 @@ describe('AgentStateMachine', () => {
     expect(sm.state.stage).toBe('storyboard');
     expect(sm.state.step).toBe('generate_scene');
   });
+
+  it('advances storyboard complete → voice → video → done', () => {
+    const sm = new AgentStateMachine();
+    sm.restore({ hasScript: true, hasShots: false, hasVoice: false, hasVideo: false });
+    sm.setTotalScenes(1);
+
+    // finish the one scene → complete
+    sm.showSceneOptions();
+    sm.selectCard('style-a');
+    expect(sm.state.step).toBe('complete');
+
+    // complete → voice offer
+    sm.proceedToVoice();
+    expect(sm.state.stage).toBe('voice');
+    expect(sm.state.step).toBe('offer');
+
+    // voice offer → matching → video offer
+    sm.startVoiceMatch();
+    expect(sm.state.step).toBe('matching');
+    sm.completeVoice();
+    expect(sm.state.stage).toBe('video');
+    expect(sm.state.step).toBe('offer');
+
+    // video offer → rendering → done
+    sm.startRender();
+    expect(sm.state.step).toBe('rendering');
+    sm.completeRender();
+    expect(sm.state.step).toBe('done');
+  });
+
+  it('voice/video transitions are no-ops when stage does not match', () => {
+    const sm = new AgentStateMachine();
+    // still in idea — none of these should fire
+    sm.proceedToVoice();
+    sm.completeVoice();
+    sm.startRender();
+    sm.completeRender();
+    expect(sm.state.stage).toBe('idea');
+    expect(sm.state.step).toBe('greeting');
+  });
 });

@@ -1,5 +1,7 @@
 import { memo } from 'react';
+import { motion } from 'framer-motion';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
+import { nodeMotionProps } from './canvas/nodeMotion';
 
 export interface StoryboardNodeData {
   shotNumber: number;
@@ -11,24 +13,29 @@ export interface StoryboardNodeData {
 }
 
 const STATUS_STYLES: Record<string, string> = {
-  candidate: 'border-dashed opacity-70 animate-pulse',
-  selected: 'border-primary ring-2 ring-primary/20 scale-[1.02]',
+  candidate: 'border-dashed',
+  leaving: 'border-dashed',
+  selected: 'border-primary ring-2 ring-primary/20',
   active: 'border-primary ring-2 ring-primary/30 shadow-lg shadow-primary/10',
   settled: '',
 };
 
-export const StoryboardNode = memo(({ data, selected }: NodeProps) => {
+export const StoryboardNode = memo(({ id, data, selected }: NodeProps) => {
   const { shotNumber, title, dialog, style, imageUrl, nodeStatus } = data as unknown as StoryboardNodeData;
   const statusClass = STATUS_STYLES[nodeStatus ?? ''] ?? '';
   const baseSelected = selected && !nodeStatus ? 'border-blue-500 ring-2 ring-blue-500/20' : 'border-border';
+  const pending = nodeStatus === 'candidate' || nodeStatus === 'leaving';
 
   return (
-    <div className={`bg-card border rounded-xl shadow-md w-[180px] overflow-hidden transition-all duration-300 ${baseSelected} ${statusClass} group`}>
+    <motion.div
+      {...nodeMotionProps(nodeStatus, id)}
+      className={`bg-card border rounded-xl shadow-md w-[180px] overflow-hidden transition-colors duration-300 ${baseSelected} ${statusClass} group`}
+    >
       <Handle type="target" position={Position.Left} className="!bg-blue-500 !w-2 !h-2" />
       <div className="aspect-[4/3] bg-gradient-to-br from-slate-800 to-slate-900 relative">
         {imageUrl ? (
           <img src={imageUrl} alt={title} className="w-full h-full object-cover" />
-        ) : nodeStatus === 'candidate' ? (
+        ) : pending ? (
           <div className="absolute inset-0 flex items-center justify-center">
             <div className="w-8 h-8 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
           </div>
@@ -43,7 +50,7 @@ export const StoryboardNode = memo(({ data, selected }: NodeProps) => {
         <span className="absolute top-1 right-1 text-[9px] bg-blue-500/70 text-white px-1 py-0.5 rounded">
           {style}
         </span>
-        {nodeStatus !== 'candidate' && (
+        {!pending && (
           <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition flex items-center justify-center">
             <button className="text-white text-[10px] bg-white/20 rounded px-2 py-1 hover:bg-white/30">重新生成</button>
           </div>
@@ -55,7 +62,7 @@ export const StoryboardNode = memo(({ data, selected }: NodeProps) => {
       </div>
       <Handle type="source" position={Position.Right} className="!bg-blue-500 !w-2 !h-2" />
       <Handle type="source" position={Position.Bottom} id="video" className="!bg-green-500 !w-2 !h-2" />
-    </div>
+    </motion.div>
   );
 });
 

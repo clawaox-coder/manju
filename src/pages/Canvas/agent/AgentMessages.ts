@@ -71,11 +71,33 @@ export function getAgentMessage(state: AgentState, ctx?: MessageContext): ChatMe
     case 'storyboard':
       return getStoryboardMessage(state, ctx);
     case 'voice':
-      return makeMsg({ type: 'action', text: '分镜已就绪！', action: { label: '一键配音', description: `${ctx?.shotCount ?? 0} 个镜头 · 预计 20 秒`, icon: '🎙' } });
+      return getVoiceMessage(state, ctx);
     case 'video':
-      return makeMsg({ type: 'action', text: '配音完成！', action: { label: '生成视频', description: '预计时长 1:30 · 1080p', icon: '🎬' } });
+      return getVideoMessage(state);
     default:
       return makeMsg({ type: 'text', text: '有什么我可以帮你的？' });
+  }
+}
+
+function getVoiceMessage(state: AgentState, ctx?: MessageContext): ChatMessage {
+  switch (state.step) {
+    case 'matching':
+      return makeMsg({ type: 'progress', text: '🎙 正在为角色匹配配音...', progress: { current: 0, total: 1, label: '配音匹配中' } });
+    case 'offer':
+    default:
+      return makeMsg({ type: 'action', text: '分镜已就绪！接下来给角色配音：', action: { label: '一键配音', description: `${ctx?.shotCount ?? 0} 个镜头 · 预计 20 秒`, icon: '🎙' } });
+  }
+}
+
+function getVideoMessage(state: AgentState): ChatMessage {
+  switch (state.step) {
+    case 'rendering':
+      return makeMsg({ type: 'progress', text: '🎬 正在渲染视频...', progress: { current: 0, total: 1, label: '渲染中' } });
+    case 'done':
+      return makeMsg({ type: 'text', text: '🎉 视频已生成！可以在右上角预览或下载。需要调整哪个部分，点击画布节点告诉我。' });
+    case 'offer':
+    default:
+      return makeMsg({ type: 'action', text: '配音完成！最后一步生成视频：', action: { label: '生成视频', description: '预计时长 1:30 · 1080p', icon: '🎬' } });
   }
 }
 
@@ -112,7 +134,7 @@ function getScriptMessage(state: AgentState, ctx?: MessageContext): ChatMessage 
     case 'generate':
       return makeMsg({ type: 'progress', text: '正在构思剧本方向...', progress: { current: 0, total: 3, label: '生成中' } });
     case 'show_options':
-      return makeMsg({ type: 'card-group', text: '为你准备了 3 个方向：', cards: [] });
+      return makeMsg({ type: 'text', text: '为你准备了 3 个剧本方向，已放到画布上 👉 点选你喜欢的那个。' });
     case 'expand':
       return makeMsg({ type: 'preview', text: '剧本已展开，确认后继续生成分镜：' });
     default:
@@ -136,7 +158,7 @@ function getStoryboardMessage(state: AgentState, ctx?: MessageContext): ChatMess
     case 'generate_scene':
       return makeMsg({ type: 'progress', text: `🎨 正在绘制第 ${state.sceneIndex + 1} 个镜头...`, progress: { current: state.sceneIndex, total: state.totalScenes, label: '生成分镜' } });
     case 'show_scene_options':
-      return makeMsg({ type: 'card-group', text: `镜头 ${state.sceneIndex + 1} 有 3 种方案：`, cards: [] });
+      return makeMsg({ type: 'text', text: `镜头 ${state.sceneIndex + 1} 有 3 种风格方案，画布上点选一个 👉` });
     case 'complete':
       return makeMsg({ type: 'text', text: '🎉 分镜全部完成！接下来可以配音或直接生成视频。' });
     default:

@@ -103,6 +103,36 @@ export class AgentStateMachine {
     }
   }
 
+  proceedToVoice(): void {
+    if (this.state.stage === 'storyboard' && this.state.step === 'complete') {
+      this.state = { ...this.state, stage: 'voice', step: 'offer' };
+    }
+  }
+
+  startVoiceMatch(): void {
+    if (this.state.stage === 'voice' && this.state.step === 'offer') {
+      this.state = { ...this.state, step: 'matching' };
+    }
+  }
+
+  completeVoice(): void {
+    if (this.state.stage === 'voice') {
+      this.state = { ...this.state, stage: 'video', step: 'offer' };
+    }
+  }
+
+  startRender(): void {
+    if (this.state.stage === 'video' && this.state.step === 'offer') {
+      this.state = { ...this.state, step: 'rendering' };
+    }
+  }
+
+  completeRender(): void {
+    if (this.state.stage === 'video') {
+      this.state = { ...this.state, step: 'done' };
+    }
+  }
+
   confirm(): void {
     if (this.state.stage === 'script' && this.state.step === 'expand') {
       this.state = { ...this.state, stage: 'storyboard', step: 'generate_scene', sceneIndex: 0 };

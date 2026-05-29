@@ -8,8 +8,10 @@ const CANDIDATE_GAP_X = 200;
 export function computeLayout(nodes: Node[]): Node[] {
   if (nodes.length === 0) return [];
 
-  const candidates = nodes.filter((n) => (n.data as { nodeStatus?: string }).nodeStatus === 'candidate');
-  const nonCandidates = nodes.filter((n) => (n.data as { nodeStatus?: string }).nodeStatus !== 'candidate');
+  // Transient selection nodes (candidate / selected / leaving) all share the
+  // "candidate-" id prefix; keep them side-by-side through the exit animation.
+  const candidates = nodes.filter((n) => n.id.startsWith('candidate-'));
+  const nonCandidates = nodes.filter((n) => !n.id.startsWith('candidate-'));
 
   const positioned: Node[] = [];
 

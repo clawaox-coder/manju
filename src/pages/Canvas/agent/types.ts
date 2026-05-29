@@ -3,8 +3,8 @@ export type Stage = 'idea' | 'script' | 'storyboard' | 'voice' | 'video';
 export type IdeaStep = 'greeting' | 'ask_type' | 'ask_style' | 'ask_duration' | 'ask_audience';
 export type ScriptStep = 'generate' | 'show_options' | 'expand';
 export type StoryboardStep = 'generate_scene' | 'show_scene_options' | 'next_scene' | 'complete';
-export type VoiceStep = 'offer';
-export type VideoStep = 'offer';
+export type VoiceStep = 'offer' | 'matching';
+export type VideoStep = 'offer' | 'rendering' | 'done';
 export type ContextEditStep = 'editing';
 
 export type Step = IdeaStep | ScriptStep | StoryboardStep | VoiceStep | VideoStep | ContextEditStep;
