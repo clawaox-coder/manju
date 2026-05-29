@@ -267,7 +267,8 @@ services:
       DATABASE_URL: "postgres://manju_app:manju_app@postgres:5432/${POSTGRES_DB:-manju}?sslmode=disable"
       JWT_PUBLIC_KEY_PATH: /run/secrets/jwt-public.pem
       JWT_ISSUER: manju-auth
-      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-sk-placeholder}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+      ANTHROPIC_BASE_URL: "${ANTHROPIC_BASE_URL:-}"
       ANTHROPIC_MODEL: "claude-sonnet-4-6"
       CORS_ORIGINS: "http://localhost:5173,http://localhost:5174"
       LOG_LEVEL: info
@@ -276,7 +277,7 @@ services:
     volumes:
       - ./secrets/jwt-public.pem:/run/secrets/jwt-public.pem:ro
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8005/healthz"]
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8005/healthz',timeout=3).status==200 else 1)"]
       interval: 5s
       timeout: 3s
       retries: 10
