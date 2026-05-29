@@ -16,11 +16,10 @@ export interface SSEEvent {
   data: Record<string, unknown>;
 }
 
-export async function streamScriptContinue(
+export async function* streamScriptContinue(
   input: ScriptContinueInput,
-  onEvent: (event: SSEEvent) => void,
   signal?: AbortSignal,
-): Promise<void> {
+): AsyncGenerator<SSEEvent> {
   const token = getAccessToken();
   const res = await fetch(`${AI_BASE}/v1/ai/script/continue`, {
     method: 'POST',
@@ -57,7 +56,7 @@ export async function streamScriptContinue(
         const raw = line.slice(5).trim();
         try {
           const data = JSON.parse(raw);
-          onEvent({ event: currentEvent as SSEEvent['event'], data });
+          yield { event: currentEvent as SSEEvent['event'], data };
         } catch { /* malformed SSE line, skip */ }
       }
     }
@@ -134,4 +133,29 @@ export async function generateTTS(params: TTSInput): Promise<Blob> {
     throw new Error(err?.detail?.message || `TTS 生成失败: ${res.status}`);
   }
   return res.blob();
+}
+
+// ---- Intent Classification ----
+
+export type IntentType = 'continue' | 'skip' | 'modify' | 'back' | 'off_topic' | 'clarify';
+
+export interface IntentClassifyInput {
+  message: string;
+  stage: string;
+  step: string;
+  context: string;
+}
+
+export interface IntentResult {
+  intent: IntentType;
+  params: Record<string, string>;
+  confidence: number;
+}
+
+export async function classifyIntent(input: IntentClassifyInput): Promise<IntentResult> {
+  return request<IntentResult>('/v1/ai/intent/classify', {
+    method: 'POST',
+    body: input,
+    base: AI_BASE,
+  });
 }
