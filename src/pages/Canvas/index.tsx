@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ReactFlow,
   Background,
@@ -48,14 +48,14 @@ function CanvasInner() {
   const { data: shots } = useShots(projectId ?? undefined);
   const { data: characters } = useAssets({ type: 'character' });
 
-  // Agent state machine
-  const smRef = useRef(new AgentStateMachine());
-  const routerRef = useRef(new AgentIntentRouter(smRef.current));
-  const [agentState, setAgentState] = useState(smRef.current.state);
+  // Agent state machine (stable singleton instances)
+  const [sm] = useState(() => new AgentStateMachine());
+  const [router] = useState(() => new AgentIntentRouter(sm));
+  const [agentState, setAgentState] = useState(sm.state);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const syncState = useCallback(() => setAgentState({ ...smRef.current.state }), []);
+  const syncState = useCallback(() => setAgentState({ ...sm.state }), [sm]);
 
   // Auto-select first project
   useEffect(() => {
@@ -72,42 +72,60 @@ function CanvasInner() {
     const hasScript = !!script?.content;
     const hasShots = (shots?.length ?? 0) > 0;
     if (hasScript || hasShots) {
-      smRef.current.restore({ hasScript, hasShots, hasVoice: false, hasVideo: false });
+      sm.restore({ hasScript, hasShots, hasVoice: false, hasVideo: false });
     } else {
-      smRef.current.advance();
+      sm.advance();
     }
-    syncState();
-    const msg = getAgentMessage(smRef.current.state, {
+    syncState(); // eslint-disable-line react-hooks/set-state-in-effect
+    const msg = getAgentMessage(sm.state, {
       projectName,
       scriptScenes: script?.content?.split(/^#{1,3}\s/m).length ?? 0,
       shotCount: shots?.length ?? 0,
     });
     setMessages([msg]);
-  }, [projectId, script, shots, projectName, syncState]);
+  }, [projectId, script, shots, projectName, syncState, sm]);
 
   // Handle option selection
   const handleSelectOption = useCallback((value: string) => {
-    smRef.current.selectOption(value);
+    // B-mode editing options route differently
+    if (sm.state.step === 'editing') {
+      if (value === 'exit_focus') {
+        sm.exitFocus();
+        syncState();
+        setMessages((m) => [...m, { id: `msg-exit-${Date.now()}`, role: 'system' as const, type: 'context-switch' as const, text: '↩ 返回主线', timestamp: Date.now() }]);
+        return;
+      }
+      sm.applyEditAction(value as 'change_style' | 'edit_content' | 'regenerate');
+      syncState();
+      const ack: Record<string, string> = {
+        change_style: '好，告诉我想要的新风格，我来重新生成。',
+        edit_content: '好，说说要怎么改，我来调整。',
+        regenerate: '正在重新生成这个节点...',
+      };
+      setMessages((m) => [...m, makeUserMessage(value), { id: `msg-edit-${Date.now()}`, role: 'ai' as const, type: 'text' as const, text: ack[value] ?? '好的。', timestamp: Date.now() }]);
+      return;
+    }
+    sm.selectOption(value);
     syncState();
-    setMessages((m) => [...m, makeUserMessage(value), getAgentMessage(smRef.current.state)]);
-  }, [syncState]);
+    setMessages((m) => [...m, makeUserMessage(value), getAgentMessage(sm.state)]);
+  }, [syncState, sm]);
 
   // Handle card selection
   const handleSelectCard = useCallback((cardId: string) => {
-    smRef.current.selectCard(cardId);
+    sm.selectCard(cardId);
     syncState();
-    setMessages((m) => [...m, getAgentMessage(smRef.current.state)]);
-  }, [syncState]);
+    setMessages((m) => [...m, getAgentMessage(sm.state)]);
+  }, [syncState, sm]);
 
   // Handle free-form input
   const handleSendMessage = useCallback(async (text: string) => {
     setMessages((m) => [...m, makeUserMessage(text)]);
     setLoading(true);
     try {
-      const result = await routerRef.current.processInput(text);
+      const result = await router.processInput(text);
       syncState();
       if (result.handled) {
-        setMessages((m) => [...m, getAgentMessage(smRef.current.state)]);
+        setMessages((m) => [...m, getAgentMessage(sm.state)]);
       } else if (result.fallbackMessage) {
         setMessages((m) => [...m, { id: `msg-fb-${Date.now()}`, role: 'ai' as const, type: 'text' as const, text: result.fallbackMessage!, timestamp: Date.now() }]);
       }
@@ -116,34 +134,60 @@ function CanvasInner() {
     } finally {
       setLoading(false);
     }
-  }, [syncState]);
+  }, [syncState, sm, router]);
 
   // Handle action (voice/video one-click)
-  const handleAction = useCallback((_action: string) => {
-    // Phase 3: wire to actual voice.match / render API calls
+  const handleAction = useCallback((action: string) => {
+    // Phase 3 wires the actual voice.match / render API calls.
+    setMessages((m) => [...m, {
+      id: `msg-act-${Date.now()}`,
+      role: 'ai' as const,
+      type: 'text' as const,
+      text: `已触发「${action}」，正在处理...`,
+      timestamp: Date.now(),
+    }]);
   }, []);
 
   // Node click → B mode
   const handleNodeClick = useCallback((_: unknown, node: Node) => {
-    smRef.current.focusNode(node.id);
+    sm.focusNode(node.id);
     syncState();
-    setMessages((m) => [...m, getAgentMessage(smRef.current.state, { focusedNodeLabel: (node.data as { title?: string }).title ?? node.id })]);
-  }, [syncState]);
+    setMessages((m) => [...m, getAgentMessage(sm.state, { focusedNodeLabel: (node.data as { title?: string }).title ?? node.id })]);
+  }, [syncState, sm]);
 
   const handleExitContext = useCallback(() => {
-    smRef.current.exitFocus();
+    sm.exitFocus();
     syncState();
     setMessages((m) => [...m, { id: `msg-exit-${Date.now()}`, role: 'system' as const, type: 'context-switch' as const, text: '↩ 返回主线', timestamp: Date.now() }]);
-  }, [syncState]);
+  }, [syncState, sm]);
+
+  // Compute candidate nodes for selection steps
+  const candidateNodes = useMemo(() => {
+    if (agentState.stage === 'script' && agentState.step === 'show_options') {
+      return [0, 1, 2].map((i) => ({
+        id: `candidate-script-${i}`,
+        type: 'script',
+        data: { sceneNumber: i + 1, title: `方案 ${i + 1}`, content: '' },
+      }));
+    }
+    if (agentState.stage === 'storyboard' && agentState.step === 'show_scene_options') {
+      return [0, 1, 2].map((i) => ({
+        id: `candidate-shot-${agentState.sceneIndex}-${i}`,
+        type: 'storyboard',
+        data: { shotNumber: agentState.sceneIndex + 1, title: `镜头 ${agentState.sceneIndex + 1}`, dialog: '', style: ['日系动漫', '美漫', '水墨'][i] },
+      }));
+    }
+    return undefined;
+  }, [agentState.stage, agentState.step, agentState.sceneIndex]);
 
   // Build graph
   const graph = useMemo(
-    () => buildCanvasGraph(script, shots, characters?.data, projectName, 'idle', undefined, projectId),
-    [script, shots, characters?.data, projectName, projectId],
+    () => buildCanvasGraph(script, shots, characters?.data, projectName, 'idle', undefined, projectId, candidateNodes),
+    [script, shots, characters?.data, projectName, projectId, candidateNodes],
   );
 
   // Apply layout + focus
-  const layoutNodes = useCanvasLayout(graph.nodes, agentState.stage);
+  const layoutNodes = useCanvasLayout(graph.nodes);
   const displayNodes = useContextFocus(layoutNodes, agentState.focusedNodeId);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(displayNodes);

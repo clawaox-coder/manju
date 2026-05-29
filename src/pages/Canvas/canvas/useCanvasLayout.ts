@@ -1,12 +1,11 @@
 import { useMemo } from 'react';
 import type { Node } from '@xyflow/react';
-import type { Stage } from '../agent/types';
 
 const COL_X = { script: 0, ai: 380, storyboard: 650, video: 950, character: 350 };
 const ROW_GAP = { script: 200, storyboard: 230, character: 200 };
 const CANDIDATE_GAP_X = 200;
 
-export function computeLayout(nodes: Node[], _stage: Stage): Node[] {
+export function computeLayout(nodes: Node[]): Node[] {
   if (nodes.length === 0) return [];
 
   const candidates = nodes.filter((n) => (n.data as { nodeStatus?: string }).nodeStatus === 'candidate');
@@ -48,6 +47,6 @@ export function computeLayout(nodes: Node[], _stage: Stage): Node[] {
   return positioned;
 }
 
-export function useCanvasLayout(nodes: Node[], stage: Stage): Node[] {
-  return useMemo(() => computeLayout(nodes, stage), [nodes, stage]);
+export function useCanvasLayout(nodes: Node[]): Node[] {
+  return useMemo(() => computeLayout(nodes), [nodes]);
 }

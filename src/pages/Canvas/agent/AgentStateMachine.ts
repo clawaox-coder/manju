@@ -1,4 +1,4 @@
-import type { AgentState, Stage, Step, Decision, IdeaContext } from './types';
+import type { AgentState, Step, Decision, IdeaContext, EditAction } from './types';
 
 const IDEA_STEPS: Step[] = ['ask_type', 'ask_style', 'ask_duration', 'ask_audience'];
 const IDEA_CONTEXT_KEYS: (keyof IdeaContext)[] = ['type', 'style', 'duration', 'audience'];
@@ -19,6 +19,7 @@ export const INITIAL_STATE: AgentState = {
   history: [],
   sceneIndex: 0,
   totalScenes: 0,
+  lastEditAction: null,
 };
 
 export class AgentStateMachine {
@@ -60,7 +61,46 @@ export class AgentStateMachine {
   }
 
   selectCard(cardId: string): void {
+    if (this.state.stage === 'storyboard' && this.state.step === 'show_scene_options') {
+      const decision: Decision = {
+        stage: this.state.stage,
+        step: this.state.step,
+        chosen: cardId,
+        alternatives: [],
+        timestamp: Date.now(),
+      };
+      const history = [...this.state.history, decision];
+      const next = this.state.sceneIndex + 1;
+      if (next >= this.state.totalScenes) {
+        this.state = { ...this.state, step: 'complete', sceneIndex: next, history };
+      } else {
+        this.state = { ...this.state, step: 'generate_scene', sceneIndex: next, history };
+      }
+      return;
+    }
     this.selectOption(cardId);
+  }
+
+  setTotalScenes(total: number): void {
+    this.state = { ...this.state, totalScenes: total };
+  }
+
+  showSceneOptions(): void {
+    if (this.state.stage === 'storyboard' && this.state.step === 'generate_scene') {
+      this.state = { ...this.state, step: 'show_scene_options' };
+    }
+  }
+
+  showScriptOptions(): void {
+    if (this.state.stage === 'script' && this.state.step === 'generate') {
+      this.state = { ...this.state, step: 'show_options' };
+    }
+  }
+
+  applyEditAction(action: EditAction): void {
+    if (this.state.step === 'editing') {
+      this.state = { ...this.state, lastEditAction: action };
+    }
   }
 
   confirm(): void {

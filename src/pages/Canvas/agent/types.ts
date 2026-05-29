@@ -25,6 +25,8 @@ export interface Decision {
   timestamp: number;
 }
 
+export type EditAction = 'change_style' | 'edit_content' | 'regenerate';
+
 export interface AgentState {
   stage: Stage;
   step: Step;
@@ -34,6 +36,7 @@ export interface AgentState {
   history: Decision[];
   sceneIndex: number;
   totalScenes: number;
+  lastEditAction: EditAction | null;
 }
 
 export type MessageType = 'text' | 'thinking' | 'options' | 'card-group' | 'preview' | 'progress' | 'action' | 'context-switch';

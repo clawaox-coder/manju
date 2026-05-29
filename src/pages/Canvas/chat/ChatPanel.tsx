@@ -53,7 +53,11 @@ export function ChatPanel({
                 <MessageThinking
                   text={msg.thinking}
                   collapsed={collapsedThinking.has(msg.id)}
-                  onToggle={() => setCollapsedThinking((s) => { const n = new Set(s); n.has(msg.id) ? n.delete(msg.id) : n.add(msg.id); return n; })}
+                  onToggle={() => setCollapsedThinking((s) => {
+                    const n = new Set(s);
+                    if (n.has(msg.id)) n.delete(msg.id); else n.add(msg.id);
+                    return n;
+                  })}
                 />
               )}
               <p className="text-[13px] leading-relaxed whitespace-pre-wrap">{msg.text}</p>

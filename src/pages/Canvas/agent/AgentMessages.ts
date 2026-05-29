@@ -1,4 +1,4 @@
-import type { AgentState, ChatMessage, CardOption } from './types';
+import type { AgentState, ChatMessage } from './types';
 
 interface MessageContext {
   projectName?: string;
