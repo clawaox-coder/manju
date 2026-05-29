@@ -12,6 +12,7 @@
 from __future__ import annotations
 import json
 import logging
+import re
 import time
 from typing import Any, AsyncGenerator
 
@@ -21,6 +22,7 @@ from fastapi import HTTPException
 
 from .. config import get_settings
 from ..repo import tasks as tasks_repo
+from ..repo import shots as shots_repo
 
 logger = logging.getLogger("ai-gateway.services")
 
@@ -68,8 +70,22 @@ async def _anthropic_once(prompt: str, system: str, max_tokens: int = 2000) -> t
     return text, msg.usage.input_tokens, msg.usage.output_tokens
 
 
+def _strip_trailing_commas(s: str) -> str:
+    """删掉结构性尾逗号 (',' 紧跟 '}' 或 ']'). 仅在严格 loads 失败后调用,
+    所以合法 JSON (含字符串里的 ',]') 不会走到这, 不必担心误伤字符串内容."""
+    return re.sub(r",(\s*[}\]])", r"\1", s)
+
+
+def _loads_tolerant(s: str) -> Any:
+    """先严格 loads; 失败再容忍尾逗号重试."""
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        return json.loads(_strip_trailing_commas(s))
+
+
 def _parse_json_loose(text: str) -> Any:
-    """从 LLM 输出中提 JSON. 容忍 ```json ... ``` 包裹与前后散文.
+    """从 LLM 输出中提 JSON. 容忍 ```json ... ``` 包裹与前后散文, 以及结构性尾逗号.
 
     策略: 找最先出现的 '{' 或 '[', 然后向后找匹配的 '}' 或 ']'.
     优先级按"先出现"决定, 避免 '回答:\\n[{...}]' 被里面的 '{' 误吃成 object.
@@ -91,11 +107,11 @@ def _parse_json_loose(text: str) -> Any:
         j = text.rfind(closer)
         if j > i:
             try:
-                return json.loads(text[i : j + 1])
+                return _loads_tolerant(text[i : j + 1])
             except json.JSONDecodeError:
                 continue
     # 退而求其次: 直接 loads
-    return json.loads(text)
+    return _loads_tolerant(text)
 
 
 async def _run_and_record(
@@ -320,23 +336,47 @@ async def storyboard_generate_async(
     start = time.monotonic()
     try:
         text, in_tok, out_tok = await _anthropic_once(
-            prompt, STORYBOARD_SYSTEM, max_tokens=3000
+            prompt, STORYBOARD_SYSTEM, max_tokens=6000
         )
         try:
-            shots = _parse_json_loose(text)
-            if not isinstance(shots, list):
-                shots = [shots]
-            result = {"shots": shots, "style": style}
+            parsed = _parse_json_loose(text)
         except json.JSONDecodeError as e:
-            result = {"shots": [], "raw_text": text, "parse_error": str(e)}
+            parsed = None
+            parse_error = str(e)
+
+        shots = []
+        if parsed is not None:
+            shots = parsed if isinstance(parsed, list) else [parsed]
+            shots = [s for s in shots if isinstance(s, dict)]
 
         duration_ms = int((time.monotonic() - start) * 1000)
+
+        if not shots:
+            # 解析失败 / 空结果 — 显式标 failed, 别静默成 succeeded
+            await tasks_repo.update_task_status(
+                team_id=team_id, user_id=user_id,
+                task_id=_UUID(task_id),
+                status="failed",
+                input_tokens=in_tok, output_tokens=out_tok,
+                duration_ms=duration_ms,
+                error=f"分镜解析失败或为空: {parse_error if parsed is None else 'no shots'}",
+                done=True,
+            )
+            return
+
+        # 持久化到 shots 表 (script-service 共享库)
+        n = await shots_repo.replace_project_shots(
+            team_id=team_id, user_id=user_id, project_id=project_id,
+            shots=shots, style=style,
+        )
         await tasks_repo.update_task_status(
             team_id=team_id, user_id=user_id,
             task_id=_UUID(task_id),
             status="succeeded",
             input_tokens=in_tok, output_tokens=out_tok,
-            duration_ms=duration_ms, result_data=result, done=True,
+            duration_ms=duration_ms,
+            result_data={"shots_count": n, "style": style},
+            done=True,
         )
     except Exception as e:
         duration_ms = int((time.monotonic() - start) * 1000)

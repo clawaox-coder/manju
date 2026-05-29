@@ -87,7 +87,7 @@ def _sign_access(priv_pem: str, user_id: str, team_id: str, role: str) -> str:
 
 
 async def _apply_all_migrations(conn: asyncpg.Connection) -> None:
-    for svc in ["auth-service", "project-service", "ai-gateway"]:
+    for svc in ["auth-service", "project-service", "script-service", "ai-gateway"]:
         d = _find_migrations_dir(svc)
         if not d.is_dir():
             continue
@@ -223,6 +223,7 @@ async def clean_tables(harness: Harness):
     admin = await asyncpg.connect(dsn=harness.admin_dsn)
     try:
         await admin.execute("TRUNCATE ai_tasks RESTART IDENTITY CASCADE")
+        await admin.execute("TRUNCATE shots RESTART IDENTITY CASCADE")
     finally:
         await admin.close()
     yield

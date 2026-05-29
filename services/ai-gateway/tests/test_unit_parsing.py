@@ -34,6 +34,16 @@ class TestParseJSONLoose:
         with pytest.raises(json.JSONDecodeError):
             ai_svc._parse_json_loose("this is not json")
 
+    def test_trailing_comma_array(self):
+        assert ai_svc._parse_json_loose('[{"a": 1}, {"b": 2},]') == [{"a": 1}, {"b": 2}]
+
+    def test_trailing_comma_object(self):
+        assert ai_svc._parse_json_loose('{"a": 1, "b": 2,}') == {"a": 1, "b": 2}
+
+    def test_trailing_comma_in_codefence(self):
+        text = '```json\n[{"title": "镜头一",},]\n```'
+        assert ai_svc._parse_json_loose(text) == [{"title": "镜头一"}]
+
 
 class TestClientGuard:
     def test_raises_503_when_no_key(self, monkeypatch):
