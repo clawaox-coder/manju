@@ -70,20 +70,23 @@ export function buildCanvasGraph(
     });
   });
 
-  // --- AI generation node (center) ---
-  const aiY = Math.max(0, (scenes.length * 200 - 200) / 2);
-  nodes.push({
-    id: 'ai-gen',
-    type: 'ai',
-    position: savedPositions?.get('ai-gen') ?? { x: 380, y: aiY },
-    data: {
-      label: 'AI 分镜生成',
-      type: 'generate',
-      status: aiStatus,
-      model: 'Sonnet 4.6',
-      onRun: onRunAi,
-    },
-  });
+  // --- AI generation node (center) — only once there's a script to feed it,
+  // otherwise it floats alone over the empty-state and looks broken ---
+  if (scenes.length > 0 || shotList.length > 0) {
+    const aiY = Math.max(0, (scenes.length * 200 - 200) / 2);
+    nodes.push({
+      id: 'ai-gen',
+      type: 'ai',
+      position: savedPositions?.get('ai-gen') ?? { x: 380, y: aiY },
+      data: {
+        label: 'AI 分镜生成',
+        type: 'generate',
+        status: aiStatus,
+        model: 'Sonnet 4.6',
+        onRun: onRunAi,
+      },
+    });
+  }
 
   // --- Character nodes (top-center) ---
   charList.forEach((char, i) => {

@@ -425,6 +425,7 @@ function CanvasInner() {
             onNodeClick={handleNodeClick}
             nodeTypes={nodeTypes}
             fitView
+            fitViewOptions={{ maxZoom: 1, padding: 0.25 }}
             minZoom={0.2}
             maxZoom={2}
             defaultEdgeOptions={{ type: 'smoothstep' }}
