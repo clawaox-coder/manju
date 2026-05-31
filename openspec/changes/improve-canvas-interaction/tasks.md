@@ -4,11 +4,11 @@
 
 ## P0. 暖身:小 bug 清理 + 测试现状盘点(低风险,先做)
 
-- [ ] P0.1 `chat/ChatPanel.tsx`:回形针(`Paperclip`)按钮接上现有上传能力,或先移除该按钮(不新增上传后端)
-- [ ] P0.2 `ChatPanel.tsx`:hero/对话态判断从 `messages.length === 1` 改为显式状态(如基于是否已有用户消息)
-- [ ] P0.3 `AgentStateMachine.restore()`:合并 `hasVoice`/`hasVideo` 都跳 `video/offer` 的冗余分支
-- [ ] P0.4 盘点 `src/test/canvas-agent.test.ts`:标出依赖待删行为(`advance→ask_type`、`selectOption→ideaContext`、`focusNode→editing`、idea 四步)的用例,作为 P2.7 重写的输入
-- [ ] P0.5 验证:`pnpm build` 绿;小 bug 不引入回归
+- [x] P0.1 `chat/ChatPanel.tsx`:回形针(`Paperclip`)按钮接上现有上传能力,或先移除该按钮(不新增上传后端)→ 已移除悬空按钮(上传留待另起 change)
+- [x] P0.2 `ChatPanel.tsx`:hero/对话态判断从 `messages.length === 1` 改为显式状态(如基于是否已有用户消息)
+- [x] P0.3 `AgentStateMachine.restore()`:合并 `hasVoice`/`hasVideo` 都跳 `video/offer` 的冗余分支(P2 重写 restore() 时已消除)
+- [x] P0.4 盘点 `src/test/canvas-agent.test.ts`:标出依赖待删行为(`advance→ask_type`、`selectOption→ideaContext`、`focusNode→editing`、idea 四步)的用例,作为 P2.7 重写的输入(已用于 P2.7)
+- [x] P0.5 验证:`pnpm build` 绿;小 bug 不引入回归(37 测试全过)
 
 ## P1. 对话契约:后端 agent 扩展到全管线(全栈,可与 P0 前端侧并行)
 

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { ArrowUp, Paperclip, Sparkles, Pencil } from 'lucide-react';
+import { ArrowUp, Sparkles, Pencil } from 'lucide-react';
 import type { ChatMessage } from '../agent/types';
 import { MessageThinking } from './MessageThinking';
 import { MessageProgress } from './MessageProgress';
@@ -55,11 +55,15 @@ export function ChatPanel({
   const lastAiId = [...messages].reverse().find((m) => m.role === 'ai')?.id;
 
   // Greeting-only / empty → render a centered hero instead of a top-anchored bubble.
-  const single = messages.length === 1 ? messages[0] : null;
-  const showHero =
-    messages.length === 0 ||
-    (!!single && single.role === 'ai' && single.type === 'text' && !single.options?.length);
-  const heroText = single?.text
+  // 显式判断「对话尚未开始」：没有任何用户消息，且不存在可交互内容（options/cards/action）。
+  // 比脆弱的 messages.length === 1 稳健。
+  const hasUserMessage = messages.some((m) => m.role === 'user');
+  const hasInteractive = messages.some(
+    (m) => (m.options?.length ?? 0) > 0 || (m.cards?.length ?? 0) > 0 || m.type === 'action',
+  );
+  const firstAiText = messages.find((m) => m.role === 'ai' && m.type === 'text')?.text;
+  const showHero = !hasUserMessage && !hasInteractive;
+  const heroText = firstAiText
     ?? '嗨，我是你的创作搭档。想做个什么样的短片？一句灵感、一个画面，随便聊聊都行。';
 
   return (
@@ -212,9 +216,6 @@ export function ChatPanel({
 
       <div className="px-4 py-3 border-t border-border">
         <div className="flex items-center gap-2 rounded-2xl border border-border bg-card px-3 py-2.5 focus-within:border-primary/40 transition">
-          <button type="button" className="text-muted-foreground hover:text-foreground transition">
-            <Paperclip className="w-4 h-4" />
-          </button>
           <input
             className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
             placeholder="描述你的创作想法..."
