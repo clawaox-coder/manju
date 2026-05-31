@@ -1,132 +1,111 @@
 import { describe, it, expect } from 'vitest';
 import { AgentStateMachine } from '@/pages/Canvas/agent/AgentStateMachine';
+import type { Stage } from '@/pages/Canvas/agent/types';
 
-describe('AgentStateMachine', () => {
-  it('starts at idea/greeting', () => {
+// 与 index.tsx 的 STAGE_ALLOWED_ACTION 保持一致：每个 stage 只允许一个制作动作。
+const STAGE_ALLOWED_ACTION: Record<Stage, string | null> = {
+  idea: 'generate_script',
+  script: 'generate_storyboard',
+  storyboard: 'match_voice',
+  voice: 'render_video',
+  video: null,
+};
+
+function isTriggerAllowed(stage: Stage, action: string): boolean {
+  return STAGE_ALLOWED_ACTION[stage] === action;
+}
+
+describe('AgentStateMachine（阶段追踪器）', () => {
+  it('初始停在 idea/chatting', () => {
     const sm = new AgentStateMachine();
     expect(sm.state.stage).toBe('idea');
-    expect(sm.state.step).toBe('greeting');
+    expect(sm.state.step).toBe('chatting');
   });
 
-  it('advances from greeting to ask_type', () => {
+  it('mergeIdeaContext 累积创意设定，忽略空值', () => {
     const sm = new AgentStateMachine();
-    sm.advance();
-    expect(sm.state.step).toBe('ask_type');
+    sm.mergeIdeaContext({ type: '漫剧', style: '' });
+    sm.mergeIdeaContext({ style: '日系动漫', audience: '年轻人' });
+    expect(sm.state.ideaContext).toEqual({ type: '漫剧', style: '日系动漫', audience: '年轻人' });
   });
 
-  it('records decision and advances on selectOption', () => {
+  it('enterBusy / markReady 切换阶段与进度态', () => {
     const sm = new AgentStateMachine();
-    sm.advance();
-    sm.selectOption('漫剧');
-    expect(sm.state.ideaContext.type).toBe('漫剧');
-    expect(sm.state.step).toBe('ask_style');
-    expect(sm.state.history).toHaveLength(1);
-    expect(sm.state.history[0].chosen).toBe('漫剧');
-  });
-
-  it('transitions from idea to script stage after all idea steps', () => {
-    const sm = new AgentStateMachine();
-    sm.advance();
-    sm.selectOption('漫剧');
-    sm.selectOption('日系动漫');
-    sm.selectOption('2分钟');
-    sm.selectOption('年轻人');
+    sm.enterBusy('script');
     expect(sm.state.stage).toBe('script');
-    expect(sm.state.step).toBe('generate');
-  });
+    expect(sm.state.step).toBe('generating');
+    sm.markReady('script');
+    expect(sm.state.step).toBe('ready');
 
-  it('enters focus mode (B mode) and restores', () => {
-    const sm = new AgentStateMachine();
-    sm.advance();
-    sm.selectOption('漫剧');
-    sm.focusNode('script-0');
-    expect(sm.state.focusedNodeId).toBe('script-0');
-    expect(sm.state.step).toBe('editing');
-    sm.exitFocus();
-    expect(sm.state.focusedNodeId).toBeNull();
-    expect(sm.state.step).toBe('ask_style');
-  });
-
-  it('restores state from project data', () => {
-    const sm = new AgentStateMachine();
-    sm.restore({ hasScript: true, hasShots: false, hasVoice: false, hasVideo: false });
-    expect(sm.state.stage).toBe('storyboard');
-    expect(sm.state.step).toBe('generate_scene');
-  });
-
-  it('storyboard generates as a whole then completes', () => {
-    const sm = new AgentStateMachine();
-    sm.restore({ hasScript: true, hasShots: false, hasVoice: false, hasVideo: false });
-    expect(sm.state.stage).toBe('storyboard');
-    expect(sm.state.step).toBe('generate_scene');
-
-    sm.completeStoryboard();
-    expect(sm.state.step).toBe('complete');
-  });
-
-  it('records edit action in B mode', () => {
-    const sm = new AgentStateMachine();
-    sm.advance();
-    sm.selectOption('漫剧');
-    sm.focusNode('shot-1');
-    sm.applyEditAction('change_style');
-    expect(sm.state.lastEditAction).toBe('change_style');
-    sm.exitFocus();
-    expect(sm.state.focusedNodeId).toBeNull();
-  });
-
-  it('transitions script generate → show_options', () => {
-    const sm = new AgentStateMachine();
-    sm.advance();
-    sm.selectOption('漫剧');
-    sm.selectOption('日系动漫');
-    sm.selectOption('2分钟');
-    sm.selectOption('年轻人');
-    expect(sm.state.step).toBe('generate');
-    sm.showScriptOptions();
-    expect(sm.state.step).toBe('show_options');
-    sm.selectOption('outline-1');
-    expect(sm.state.step).toBe('expand');
-    sm.confirm();
-    expect(sm.state.stage).toBe('storyboard');
-    expect(sm.state.step).toBe('generate_scene');
-  });
-
-  it('advances storyboard complete → voice → video → done', () => {
-    const sm = new AgentStateMachine();
-    sm.restore({ hasScript: true, hasShots: false, hasVoice: false, hasVideo: false });
-
-    // whole-storyboard generation → complete
-    sm.completeStoryboard();
-    expect(sm.state.step).toBe('complete');
-
-    // complete → voice offer
-    sm.proceedToVoice();
-    expect(sm.state.stage).toBe('voice');
-    expect(sm.state.step).toBe('offer');
-
-    // voice offer → matching → video offer
-    sm.startVoiceMatch();
+    sm.enterBusy('voice');
     expect(sm.state.step).toBe('matching');
-    sm.completeVoice();
-    expect(sm.state.stage).toBe('video');
-    expect(sm.state.step).toBe('offer');
-
-    // video offer → rendering → done
-    sm.startRender();
+    sm.enterBusy('video');
     expect(sm.state.step).toBe('rendering');
-    sm.completeRender();
-    expect(sm.state.step).toBe('done');
   });
 
-  it('voice/video transitions are no-ops when stage does not match', () => {
+  it('focusNode 记录/清空聚焦目标', () => {
     const sm = new AgentStateMachine();
-    // still in idea — none of these should fire
-    sm.proceedToVoice();
-    sm.completeVoice();
-    sm.startRender();
-    sm.completeRender();
+    sm.focusNode('shot-2');
+    expect(sm.state.focusedNodeId).toBe('shot-2');
+    sm.focusNode(null);
+    expect(sm.state.focusedNodeId).toBeNull();
+  });
+
+  // ---- restore：按已有产物恢复阶段 ----
+
+  it('空项目恢复到 idea', () => {
+    const sm = new AgentStateMachine();
+    sm.restore({ hasScript: false, hasShots: false, hasVoice: false, hasVideo: false });
     expect(sm.state.stage).toBe('idea');
-    expect(sm.state.step).toBe('greeting');
+  });
+
+  it('有剧本无分镜 → storyboard', () => {
+    const sm = new AgentStateMachine();
+    sm.restore({ hasScript: true, hasShots: false, hasVoice: false, hasVideo: false });
+    expect(sm.state.stage).toBe('storyboard');
+  });
+
+  it('有分镜 → voice', () => {
+    const sm = new AgentStateMachine();
+    sm.restore({ hasScript: true, hasShots: true, hasVoice: false, hasVideo: false });
+    expect(sm.state.stage).toBe('voice');
+  });
+
+  it('有配音 → video（chatting，尚未出片）', () => {
+    const sm = new AgentStateMachine();
+    sm.restore({ hasScript: true, hasShots: true, hasVoice: true, hasVideo: false });
+    expect(sm.state.stage).toBe('video');
+    expect(sm.state.step).toBe('chatting');
+  });
+
+  it('已出片 → video/ready', () => {
+    const sm = new AgentStateMachine();
+    sm.restore({ hasScript: true, hasShots: true, hasVoice: true, hasVideo: true });
+    expect(sm.state.stage).toBe('video');
+    expect(sm.state.step).toBe('ready');
+  });
+});
+
+describe('trigger 阶段白名单校验', () => {
+  it('每个 stage 只放行其对应的 action', () => {
+    expect(isTriggerAllowed('idea', 'generate_script')).toBe(true);
+    expect(isTriggerAllowed('script', 'generate_storyboard')).toBe(true);
+    expect(isTriggerAllowed('storyboard', 'match_voice')).toBe(true);
+    expect(isTriggerAllowed('voice', 'render_video')).toBe(true);
+  });
+
+  it('越权 action 一律拒绝', () => {
+    // idea 阶段不能直接渲染视频
+    expect(isTriggerAllowed('idea', 'render_video')).toBe(false);
+    // script 阶段不能跳过分镜去配音
+    expect(isTriggerAllowed('script', 'match_voice')).toBe(false);
+    // storyboard 阶段不能直接出片
+    expect(isTriggerAllowed('storyboard', 'render_video')).toBe(false);
+  });
+
+  it('video 阶段不允许任何 trigger', () => {
+    for (const action of ['generate_script', 'generate_storyboard', 'match_voice', 'render_video']) {
+      expect(isTriggerAllowed('video', action)).toBe(false);
+    }
   });
 });

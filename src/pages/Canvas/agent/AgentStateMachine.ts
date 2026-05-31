@@ -1,7 +1,4 @@
-import type { AgentState, Step, Decision, IdeaContext, EditAction } from './types';
-
-const IDEA_STEPS: Step[] = ['ask_type', 'ask_style', 'ask_duration', 'ask_audience'];
-const IDEA_CONTEXT_KEYS: (keyof IdeaContext)[] = ['type', 'style', 'duration', 'audience'];
+import type { AgentState, Stage, Step } from './types';
 
 export interface ProjectData {
   hasScript: boolean;
@@ -10,14 +7,23 @@ export interface ProjectData {
   hasVideo: boolean;
 }
 
+// 退化为「阶段追踪器」：只维护当前 stage/step 与由项目数据派生的进度，
+// 不再生产任何 user-facing 文案，也不再有 idea 阶段的固定问答分支。
+// 全程对话由前端统一的 chat() 路径驱动（见 index.tsx 的 runAgentTurn）。
 export const INITIAL_STATE: AgentState = {
   stage: 'idea',
-  step: 'greeting',
+  step: 'chatting',
   ideaContext: {},
   focusedNodeId: null,
-  previousStep: null,
-  history: [],
-  lastEditAction: null,
+};
+
+// 每个 stage 的"生成中/进行中"步骤——进度展示与去重用。
+const STAGE_BUSY_STEP: Record<Stage, Step> = {
+  idea: 'chatting',
+  script: 'generating',
+  storyboard: 'generating',
+  voice: 'matching',
+  video: 'rendering',
 };
 
 export class AgentStateMachine {
@@ -27,142 +33,42 @@ export class AgentStateMachine {
     this.state = initial ? { ...initial } : { ...INITIAL_STATE };
   }
 
-  advance(): void {
-    if (this.state.stage === 'idea' && this.state.step === 'greeting') {
-      this.state = { ...this.state, step: 'ask_type' };
-    }
-  }
-
-  selectOption(value: string): void {
-    const decision: Decision = {
-      stage: this.state.stage,
-      step: this.state.step,
-      chosen: value,
-      alternatives: [],
-      timestamp: Date.now(),
-    };
-    const history = [...this.state.history, decision];
-
-    if (this.state.stage === 'idea') {
-      const idx = IDEA_STEPS.indexOf(this.state.step);
-      const contextKey = IDEA_CONTEXT_KEYS[idx];
-      const ideaContext = { ...this.state.ideaContext, [contextKey]: value };
-
-      if (idx < IDEA_STEPS.length - 1) {
-        this.state = { ...this.state, step: IDEA_STEPS[idx + 1], ideaContext, history };
-      } else {
-        this.state = { ...this.state, stage: 'script', step: 'generate', ideaContext, history };
-      }
-    } else if (this.state.stage === 'script' && this.state.step === 'show_options') {
-      this.state = { ...this.state, step: 'expand', history };
-    }
-  }
-
-  /** Agent-driven idea stage: merge LLM-extracted settings into ideaContext. */
-  mergeIdeaContext(extracted: Partial<IdeaContext>): void {
+  /** 合并 LLM 抽取出的创意设定（idea 阶段累积）。 */
+  mergeIdeaContext(extracted: Record<string, string>): void {
     const clean = Object.fromEntries(
       Object.entries(extracted).filter(([, v]) => typeof v === 'string' && v.trim()),
-    ) as Partial<IdeaContext>;
+    );
     if (Object.keys(clean).length === 0) return;
     this.state = { ...this.state, ideaContext: { ...this.state.ideaContext, ...clean } };
   }
 
-  /** Agent-driven idea stage: jump straight to script generation when the
-   *  conversation agent decides enough is collected (trigger: generate_script). */
-  beginScriptGen(): void {
-    if (this.state.stage === 'idea') {
-      this.state = { ...this.state, stage: 'script', step: 'generate' };
-    }
+  /** 进入某个 stage 的"进行中"步骤（触发制作动作时调用）。 */
+  enterBusy(stage: Stage): void {
+    this.state = { ...this.state, stage, step: STAGE_BUSY_STEP[stage] };
   }
 
-  selectCard(cardId: string): void {
-    this.selectOption(cardId);
+  /** 标记当前 stage 的产物已就绪，进入 ready 步骤（停在本阶段等待对话）。 */
+  markReady(stage: Stage): void {
+    this.state = { ...this.state, stage, step: 'ready' };
   }
 
-  showScriptOptions(): void {
-    if (this.state.stage === 'script' && this.state.step === 'generate') {
-      this.state = { ...this.state, step: 'show_options' };
-    }
+  /** 点选画布节点 → 记录聚焦目标（聚焦讨论交由 chat() 处理，不再写死台词）。 */
+  focusNode(nodeId: string | null): void {
+    this.state = { ...this.state, focusedNodeId: nodeId };
   }
 
-  applyEditAction(action: EditAction): void {
-    if (this.state.step === 'editing') {
-      this.state = { ...this.state, lastEditAction: action };
-    }
-  }
-
-  proceedToVoice(): void {
-    if (this.state.stage === 'storyboard' && this.state.step === 'complete') {
-      this.state = { ...this.state, stage: 'voice', step: 'offer' };
-    }
-  }
-
-  completeStoryboard(): void {
-    if (this.state.stage === 'storyboard') {
-      this.state = { ...this.state, step: 'complete' };
-    }
-  }
-
-  startVoiceMatch(): void {
-    if (this.state.stage === 'voice' && this.state.step === 'offer') {
-      this.state = { ...this.state, step: 'matching' };
-    }
-  }
-
-  completeVoice(): void {
-    if (this.state.stage === 'voice') {
-      this.state = { ...this.state, stage: 'video', step: 'offer' };
-    }
-  }
-
-  startRender(): void {
-    if (this.state.stage === 'video' && this.state.step === 'offer') {
-      this.state = { ...this.state, step: 'rendering' };
-    }
-  }
-
-  completeRender(): void {
-    if (this.state.stage === 'video') {
-      this.state = { ...this.state, step: 'done' };
-    }
-  }
-
-  confirm(): void {
-    if (this.state.stage === 'script' && this.state.step === 'expand') {
-      this.state = { ...this.state, stage: 'storyboard', step: 'generate_scene' };
-    }
-  }
-
-  focusNode(nodeId: string): void {
-    this.state = {
-      ...this.state,
-      focusedNodeId: nodeId,
-      previousStep: { stage: this.state.stage, step: this.state.step },
-      step: 'editing',
-    };
-  }
-
-  exitFocus(): void {
-    if (this.state.previousStep) {
-      this.state = {
-        ...this.state,
-        stage: this.state.previousStep.stage,
-        step: this.state.previousStep.step,
-        focusedNodeId: null,
-        previousStep: null,
-      };
-    }
-  }
-
+  /** 依据项目已有数据恢复到正确阶段。 */
   restore(data: ProjectData): void {
     if (data.hasVideo) {
-      this.state = { ...this.state, stage: 'video', step: 'offer' };
+      this.state = { ...this.state, stage: 'video', step: 'ready' };
     } else if (data.hasVoice) {
-      this.state = { ...this.state, stage: 'video', step: 'offer' };
+      this.state = { ...this.state, stage: 'video', step: 'chatting' };
     } else if (data.hasShots) {
-      this.state = { ...this.state, stage: 'voice', step: 'offer' };
+      this.state = { ...this.state, stage: 'voice', step: 'chatting' };
     } else if (data.hasScript) {
-      this.state = { ...this.state, stage: 'storyboard', step: 'generate_scene' };
+      this.state = { ...this.state, stage: 'storyboard', step: 'chatting' };
+    } else {
+      this.state = { ...this.state, stage: 'idea', step: 'chatting' };
     }
   }
 }

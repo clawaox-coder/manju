@@ -8,22 +8,16 @@ import { CanvasToolbar } from './CanvasToolbar';
 import { AssetLibraryPanel } from './AssetLibraryPanel';
 import { AccountMenu } from '@/components/layout/AccountMenu';
 import { AgentStateMachine } from './agent/AgentStateMachine';
-import { AgentIntentRouter } from './agent/AgentIntentRouter';
-import { getAgentMessage, makeUserMessage } from './agent/AgentMessages';
-import type { ChatMessage } from './agent/types';
+import { makeUserMessage, makeAiMessage, makeProgressMessage, makeErrorAction, makeSystemMessage } from './agent/AgentMessages';
+import type { ChatMessage, Stage } from './agent/types';
 import { useStore } from '@/store';
 import { useEffectiveTheme } from '@/hooks/useTheme';
 import { useScript, useShots, useUpdateScript } from '@/hooks/useScriptApi';
 import { useAssets } from '@/hooks/useAssetApi';
 import { useProjects, useUpdateProject } from '@/hooks/useProjectApi';
-import { voiceMatch, streamScriptContinue, storyboardGenerate, getAiTask, chat, generateTitle } from '@/lib/api/ai';
+import { voiceMatch, streamScriptContinue, storyboardGenerate, getAiTask, chat, generateTitle, type ChatTrigger } from '@/lib/api/ai';
 import { createRender, getRender } from '@/lib/api/render';
 import { buildCanvasGraph } from './buildGraph';
-
-type Role = 'ai' | 'system';
-function msg(role: Role, text: string): ChatMessage {
-  return { id: `msg-${role}-${Date.now()}-${Math.round(Math.random() * 1e6)}`, role, type: 'text', text, timestamp: Date.now() };
-}
 
 const RENDER_TERMINAL = ['done', 'failed', 'cancelled'];
 const RENDER_POLL_MS = 2000;
@@ -54,6 +48,16 @@ const STAGE_LABELS = {
   voice: '配声音',
   video: '出成片',
 } as const;
+
+// 每个 stage 只允许它对应的那一个制作动作（与后端 CHAT_SYSTEM 的白名单一致）。
+// video 阶段不允许任何 trigger。前端据此对 LLM 返回的 trigger 做越权校验。
+const STAGE_ALLOWED_ACTION: Record<Stage, ChatTrigger['action'] | null> = {
+  idea: 'generate_script',
+  script: 'generate_storyboard',
+  storyboard: 'match_voice',
+  voice: 'render_video',
+  video: null,
+};
 
 async function genOutline(projectId: string, instruction: string): Promise<string> {
   let full = '';
@@ -186,26 +190,23 @@ function CanvasInner() {
   const { data: characters } = useAssets({ type: 'character' });
   const updateScript = useUpdateScript(projectId ?? '');
   const updateProject = useUpdateProject();
-  // Agent state machine (stable singleton instances)
+  // 阶段追踪器（稳定单例）——只追踪 stage/step 与创意设定，不生产对话文案。
   const [sm] = useState(() => new AgentStateMachine());
-  const [router] = useState(() => new AgentIntentRouter(sm));
   const [agentState, setAgentState] = useState(sm.state);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const messagesRef = useRef<ChatMessage[]>([]);
   useEffect(() => { messagesRef.current = messages; }, [messages]);
-  // Once the conversation has started (user typed, picked an option, or an idea
-  // was carried in from the showcase), the init effect must stop re-seeding the
-  // greeting on late data loads — otherwise it wipes the live conversation.
+  // 会话一旦开始（用户说话、或从 showcase 带入灵感），init effect 就不再重置问候，
+  // 否则会在数据延迟加载时冲掉正在进行的对话。
   const conversationStartedRef = useRef(false);
   const ideaKickedRef = useRef(false);
   // 标题只在第一句用户消息后生成一次。
   const titleGenStartedRef = useRef(false);
   const [loading, setLoading] = useState(false);
-  const [selection, setSelection] = useState<{ selectedId: string } | null>(null);
   const [assetPanelOpen, setAssetPanelOpen] = useState(false);
   const editorRef = useRef<ReturnType<typeof useEditor> | null>(null);
-  const [scriptCandidates, setScriptCandidates] = useState<{ title: string; content: string }[]>([]);
-  const [selectedScript, setSelectedScript] = useState<string>('');
+  // 防止同一制作动作并发触发（trigger 可能在连续两轮里重复出现）。
+  const busyRef = useRef(false);
   const syncState = useCallback(() => setAgentState({ ...sm.state }), [sm]);
   // Auto-select first project
   useEffect(() => {
@@ -216,147 +217,158 @@ function CanvasInner() {
     }
   }, [projectId, projects, setProjectId, setProjectName]);
 
-  // Initialize: restore from data or greeting
+  // 初始化：依据项目已有数据恢复阶段；首条问候交由 chat() 在 idea 阶段产生，
+  // 这里只在「有产物」时落一条进度态恢复提示，空项目则发一条欢迎语 turn。
   useEffect(() => {
     if (!projectId) return;
     if (conversationStartedRef.current) return;
+    conversationStartedRef.current = true;
     const hasScript = !!script?.content;
     const hasShots = (shots?.length ?? 0) > 0;
-    if (hasScript || hasShots) {
-      sm.restore({ hasScript, hasShots, hasVoice: false, hasVideo: false });
-    } else {
-      sm.advance();
-    }
+    sm.restore({ hasScript, hasShots, hasVoice: false, hasVideo: false });
     syncState();
-    const initMsg = getAgentMessage(sm.state, {
-      projectName,
-      scriptScenes: script?.content?.split(/^#{1,3}\s/m).length ?? 0,
-      shotCount: shots?.length ?? 0,
-    });
-    setMessages([initMsg]);
-  }, [projectId, script, shots, projectName, syncState, sm]);
+    setMessages([
+      makeAiMessage('嗨，我是你的创作搭档。想做个什么样的短片？随便聊聊就行——一句灵感、一个画面，都可以。'),
+    ]);
+  }, [projectId, script, shots, syncState, sm]);
 
-  // Auto-advance storyboard/complete → voice offer
-  useEffect(() => {
-    if (agentState.stage === 'storyboard' && agentState.step === 'complete') {
-      sm.proceedToVoice();
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      syncState();
-      setMessages((m) => [...m, getAgentMessage(sm.state, { shotCount: shots?.length ?? 0 })]);
-    }
-  }, [agentState.stage, agentState.step, sm, syncState, shots]);
+  // ---- 制作动作：由对话 trigger 显式触发，不再由状态机 step 监听自动跑。 ----
+  // 每个都自带忙碌守卫，跑完用 markReady 落进度态 + 一条结果消息。
 
-  // Generate 3 real script-outline candidates (parallel) from the idea context
-  const scriptGenStartedRef = useRef(false);
-  useEffect(() => {
-    if (agentState.stage !== 'script' || agentState.step !== 'generate' || !projectId) return;
-    if (scriptGenStartedRef.current) return;
-    scriptGenStartedRef.current = true;
-    let cancelled = false;
-    (async () => {
+  // 剧本：用累积的创意设定生成大纲并直接保存为剧本（统一对话版不再做画布三选一，
+  // 候选改由对话卡片承载——见 P3；此处先生成一个方向并保存，进入分镜。
+  const runScriptGen = useCallback(async () => {
+    if (!projectId || busyRef.current) return;
+    busyRef.current = true;
+    sm.enterBusy('script'); syncState();
+    setMessages((m) => [...m, makeProgressMessage('正在构思剧本...', '生成剧本')]);
+    try {
       const { type = '漫剧', style = '日系动漫', tone, duration = '1分钟', audience = '年轻人' } = sm.state.ideaContext;
       const base = `用${type}形式、${style}风格创作一个短剧大纲（约${duration}，受众${audience}${tone ? `，${tone}基调` : ''}）。直接给出分场景大纲。`;
-      const dirs = [
-        { title: '强冲突反转', extra: '走强冲突、结尾反转路线。' },
-        { title: '轻松日常', extra: '走轻松幽默的日常喜剧路线。' },
-        { title: '细腻情感', extra: '走细腻情感、人物弧光路线。' },
-      ];
-      try {
-        const outlines = await Promise.all(dirs.map((d) => genOutline(projectId, base + d.extra)));
-        if (cancelled) return;
-        setScriptCandidates(outlines.map((c, i) => ({ title: dirs[i].title, content: c || '（生成为空）' })));
-        sm.showScriptOptions();
-        syncState();
-      } catch {
-        if (cancelled) return;
-        setMessages((m) => [...m, { id: `msg-sgerr-${Date.now()}`, role: 'ai' as const, type: 'action' as const, text: '生成剧本时出错了。', action: { label: '重试生成', description: '点击重新生成剧本方向', icon: '↻' }, timestamp: Date.now() }]);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [agentState.stage, agentState.step, projectId, sm, syncState]);
-
-  useEffect(() => {
-    if (!(agentState.stage === 'script' && agentState.step === 'generate')) {
-      scriptGenStartedRef.current = false;
+      const outline = await genOutline(projectId, base);
+      const content = outline || '（生成为空）';
+      await updateScript.mutateAsync({ content, expected_version_no: script?.version_no ?? 0 });
+      sm.markReady('script'); syncState();
+      setMessages((m) => [...m, makeAiMessage('剧本初稿好了，已经放到画布上。想调哪段、或者直接进分镜，告诉我就行。')]);
+    } catch {
+      sm.markReady('idea'); syncState();
+      setMessages((m) => [...m, makeErrorAction('生成剧本时出错了。', '重试生成', '点击重新生成剧本')]);
+    } finally {
+      busyRef.current = false;
     }
-  }, [agentState.stage, agentState.step]);
+  }, [projectId, sm, syncState, updateScript, script]);
 
-  // Run the real storyboard generation on entering storyboard
-  const storyboardGenStartedRef = useRef(false);
-  useEffect(() => {
-    if (agentState.stage !== 'storyboard' || agentState.step !== 'generate_scene' || !projectId) return;
-    if (storyboardGenStartedRef.current) return;
-    storyboardGenStartedRef.current = true;
-    let cancelled = false;
-    (async () => {
-      try {
-        const style = sm.state.ideaContext.style ?? 'default';
-        const res = await storyboardGenerate({ project_id: projectId, style, regenerate_all: true });
-        const ok = await pollAiTask(res.task_id);
-        if (cancelled) return;
-        if (!ok) throw new Error('storyboard task failed');
-        await refetchShots();
-        sm.completeStoryboard();
-        syncState();
-      } catch {
-        if (cancelled) return;
-        setMessages((m) => [...m, { id: `msg-sberr-${Date.now()}`, role: 'ai' as const, type: 'action' as const, text: '生成分镜时出错了。', action: { label: '重试生成', description: '点击重新生成分镜', icon: '↻' }, timestamp: Date.now() }]);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [agentState.stage, agentState.step, projectId, sm, syncState, refetchShots]);
-
-  useEffect(() => {
-    if (!(agentState.stage === 'storyboard' && agentState.step === 'generate_scene')) {
-      storyboardGenStartedRef.current = false;
+  const runStoryboardGen = useCallback(async () => {
+    if (!projectId || busyRef.current) return;
+    busyRef.current = true;
+    sm.enterBusy('storyboard'); syncState();
+    setMessages((m) => [...m, makeProgressMessage('🎨 正在生成分镜...', '生成分镜')]);
+    try {
+      const style = sm.state.ideaContext.style ?? 'default';
+      const res = await storyboardGenerate({ project_id: projectId, style, regenerate_all: true });
+      const ok = await pollAiTask(res.task_id);
+      if (!ok) throw new Error('storyboard task failed');
+      await refetchShots();
+      sm.markReady('storyboard'); syncState();
+      setMessages((m) => [...m, makeAiMessage('分镜出来了，画布右侧能看到每一镜。要改某一镜，或者去配音都行。')]);
+    } catch {
+      sm.markReady('script'); syncState();
+      setMessages((m) => [...m, makeErrorAction('生成分镜时出错了。', '重试生成', '点击重新生成分镜')]);
+    } finally {
+      busyRef.current = false;
     }
-  }, [agentState.stage, agentState.step]);
+  }, [projectId, sm, syncState, refetchShots]);
 
-  // Run one agent turn for the free-form idea stage. The backend LLM agent
-  // analyzes the conversation, returns a natural reply + dynamically-generated
-  // quick-reply options, extracts idea settings, and may trigger script gen.
-  const runIdeaAgentTurn = useCallback(async (pendingUserText?: string) => {
+  const runVoiceMatch = useCallback(async () => {
+    if (!projectId || busyRef.current) return;
+    busyRef.current = true;
+    sm.enterBusy('voice'); syncState();
+    setMessages((m) => [...m, makeProgressMessage('🎙 正在为角色匹配配音...', '配音匹配')]);
+    try {
+      const res = await voiceMatch({ project_id: projectId, content: script?.content ?? '', auto_assign: true });
+      const n = res.matches?.length ?? 0;
+      sm.markReady('voice'); syncState();
+      setMessages((m) => [...m, makeAiMessage(`已为 ${n} 个角色匹配了配音。想换某个角色的声音、还是直接出片？`)]);
+    } catch {
+      sm.markReady('storyboard'); syncState();
+      setMessages((m) => [...m, makeErrorAction('配音匹配失败。', '重试配音', '点击重新匹配')]);
+    } finally {
+      busyRef.current = false;
+    }
+  }, [projectId, sm, syncState, script]);
+
+  const runRender = useCallback(async () => {
+    if (!projectId || busyRef.current) return;
+    busyRef.current = true;
+    sm.enterBusy('video'); syncState();
+    setMessages((m) => [...m, makeProgressMessage('🎬 正在渲染视频...', '渲染中')]);
+    try {
+      const job = await createRender(
+        { project_id: projectId, resolution: '1080p', format: 'mp4' },
+        `render-${projectId}-${Date.now()}`,
+      );
+      const result = await pollRender(job.job_id, () => {
+        setMessages((m) => [...m, makeAiMessage('比预期久一点，还在渲染中...')]);
+      });
+      if (!result.ok) throw new Error('render failed');
+      sm.markReady('video'); syncState();
+      setMessages((m) => [...m, makeAiMessage('🎉 视频出来了！右上角可以预览或下载。想调哪段，点画布节点告诉我。')]);
+    } catch {
+      sm.markReady('voice'); syncState();
+      setMessages((m) => [...m, makeErrorAction('渲染遇到问题。', '重试渲染', '点击重新生成视频')]);
+    } finally {
+      busyRef.current = false;
+    }
+  }, [projectId, sm, syncState]);
+
+  // trigger 越权校验：只执行「当前 stage 允许的那一个 action」，非法忽略。
+  const executeTrigger = useCallback((trigger: ChatTrigger | null) => {
+    if (!trigger) return;
+    const allowed = STAGE_ALLOWED_ACTION[sm.state.stage];
+    if (trigger.action !== allowed) return; // 越权 / video 阶段 → 忽略
+    switch (trigger.action) {
+      case 'generate_script': void runScriptGen(); break;
+      case 'generate_storyboard': void runStoryboardGen(); break;
+      case 'match_voice': void runVoiceMatch(); break;
+      case 'render_video': void runRender(); break;
+    }
+  }, [sm, runScriptGen, runStoryboardGen, runVoiceMatch, runRender]);
+
+  // 统一的对话一轮：全程任意 stage 都走这条 chat() 路径。后端依 stage 给出
+  // 自然回应 + 动态 options + 可能的 trigger；前端 merge 设定、落消息、校验 trigger。
+  const runAgentTurn = useCallback(async (pendingUserText?: string) => {
+    if (!projectId) return;
     setLoading(true);
     try {
       const history = messagesRef.current
         .filter((m) => m.role === 'user' || m.role === 'ai')
         .map((m) => ({ role: (m.role === 'ai' ? 'assistant' : 'user') as 'user' | 'assistant', content: m.text }))
         .filter((t) => t.content.trim());
-      // The just-sent turn isn't in messagesRef yet (ref updates post-render),
-      // so append it explicitly to keep the agent's history complete.
+      // 刚发出的这轮还没进 messagesRef（ref 在渲染后才更新），显式补上保证历史完整。
       if (pendingUserText?.trim()) {
         history.push({ role: 'user', content: pendingUserText.trim() });
       }
       const res = await chat({
         project_id: projectId,
-        stage: 'idea',
+        stage: sm.state.stage,
         messages: history,
         context: {
           has_script: !!script?.content,
           has_shots: (shots?.length ?? 0) > 0,
+          has_voice: false,
+          has_video: false,
           idea: sm.state.ideaContext as Record<string, string>,
         },
       });
       sm.mergeIdeaContext(res.extracted);
-      setMessages((m) => [...m, {
-        id: `msg-ai-${Date.now()}`,
-        role: 'ai' as const,
-        type: 'text' as const,
-        text: res.reply,
-        thinking: res.thinking || undefined,
-        options: res.options?.length ? res.options : undefined,
-        timestamp: Date.now(),
-      }]);
-      if (res.trigger?.action === 'generate_script') {
-        sm.beginScriptGen();
-        syncState();
-      }
+      setMessages((m) => [...m, makeAiMessage(res.reply, { thinking: res.thinking, options: res.options })]);
+      executeTrigger(res.trigger);
     } catch {
-      setMessages((m) => [...m, { id: `msg-err-${Date.now()}`, role: 'ai' as const, type: 'text' as const, text: '网络出了点问题，请再试一次。', timestamp: Date.now() }]);
+      setMessages((m) => [...m, makeAiMessage('网络出了点问题，请再试一次。')]);
     } finally {
       setLoading(false);
     }
-  }, [projectId, script, shots, sm, syncState]);
+  }, [projectId, script, shots, sm, executeTrigger]);
 
   // 用户第一句话后，调 LLM 生成一个简短标题并存为项目名。只跑一次。
   // 若用户已经手动改过名字（非空且非默认占位），不覆盖。
@@ -387,173 +399,56 @@ function CanvasInner() {
     void updateProject.mutateAsync({ id: projectId, input: { name: clean } });
   }, [projectId, projectName, setProjectName, updateProject]);
 
-  // Idea carried in from the showcase: seed it as the first user turn and let
-  // the agent respond, instead of showing the generic greeting. Runs once.
+  // 从 showcase 带入的灵感：作为第一句用户消息喂给 agent，而非通用问候。只跑一次。
   useEffect(() => {
     const idea = (location.state as { idea?: string } | null)?.idea?.trim();
     if (!idea || ideaKickedRef.current || !projectId) return;
     if (sm.state.stage !== 'idea') return;
     ideaKickedRef.current = true;
     conversationStartedRef.current = true;
-    // Clear the nav state so a refresh doesn't replay the idea.
+    // 清掉 nav state，刷新不再重放灵感。
     window.history.replaceState({}, '');
-    // Defer state updates out of the effect's synchronous phase.
     queueMicrotask(() => {
       setMessages([makeUserMessage(idea)]);
       void maybeGenerateTitle(idea);
-      void runIdeaAgentTurn(idea);
+      void runAgentTurn(idea);
     });
-  }, [location.state, projectId, sm, runIdeaAgentTurn, maybeGenerateTitle]);
+  }, [location.state, projectId, sm, runAgentTurn, maybeGenerateTitle]);
 
-  // Handle option selection
+  // 快捷回复点选 = 一次用户 turn，喂回统一对话。
   const handleSelectOption = useCallback((value: string) => {
-    if (sm.state.step === 'editing') {
-      if (value === 'exit_focus') {
-        sm.exitFocus();
-        syncState();
-        setMessages((m) => [...m, { id: `msg-exit-${Date.now()}`, role: 'system' as const, type: 'context-switch' as const, text: '↩ 返回主线', timestamp: Date.now() }]);
-        return;
-      }
-      sm.applyEditAction(value as 'change_style' | 'edit_content' | 'regenerate');
-      syncState();
-      const ack: Record<string, string> = {
-        change_style: '好，告诉我想要的新风格，我来重新生成。',
-        edit_content: '好，说说要怎么改，我来调整。',
-        regenerate: '正在重新生成这个节点...',
-      };
-      setMessages((m) => [...m, makeUserMessage(value), { id: `msg-edit-${Date.now()}`, role: 'ai' as const, type: 'text' as const, text: ack[value] ?? '好的。', timestamp: Date.now() }]);
-      return;
-    }
-    // Idea stage: a quick-reply pick is just a user turn fed back to the agent.
-    if (sm.state.stage === 'idea') {
-      setMessages((m) => [...m, makeUserMessage(value)]);
-      void runIdeaAgentTurn(value);
-      return;
-    }
-    sm.selectOption(value);
-    syncState();
-    setMessages((m) => [...m, makeUserMessage(value), getAgentMessage(sm.state)]);
-  }, [syncState, sm, runIdeaAgentTurn]);
+    setMessages((m) => [...m, makeUserMessage(value)]);
+    void runAgentTurn(value);
+  }, [runAgentTurn]);
 
-  // Handle free-form input
+  // 自由输入：全程统一走 runAgentTurn（idea 阶段顺带生成标题）。
   const handleSendMessage = useCallback(async (text: string) => {
     setMessages((m) => [...m, makeUserMessage(text)]);
-    // Idea stage is fully agent-driven (natural conversation + dynamic options).
     if (sm.state.stage === 'idea') {
-      // 首句话后顺带生成标题（幂等，内部自己守一次）。
-      void maybeGenerateTitle(text);
-      await runIdeaAgentTurn(text);
-      return;
+      void maybeGenerateTitle(text); // 首句话后顺带生成标题（幂等）
     }
-    // Later stages: classify intent and route through the deterministic flow.
-    setLoading(true);
-    try {
-      const result = await router.processInput(text);
-      syncState();
-      if (result.handled) {
-        setMessages((m) => [...m, getAgentMessage(sm.state)]);
-      } else if (result.fallbackMessage) {
-        setMessages((m) => [...m, { id: `msg-fb-${Date.now()}`, role: 'ai' as const, type: 'text' as const, text: result.fallbackMessage!, timestamp: Date.now() }]);
-      }
-    } catch {
-      setMessages((m) => [...m, { id: `msg-err-${Date.now()}`, role: 'ai' as const, type: 'text' as const, text: '网络出了点问题，请再试一次。', timestamp: Date.now() }]);
-    } finally {
-      setLoading(false);
+    await runAgentTurn(text);
+  }, [sm, runAgentTurn, maybeGenerateTitle]);
+
+  // 动作消息（目前只剩「重试」类）：按当前 stage 重新触发对应制作。
+  const handleAction = useCallback(() => {
+    if (!projectId || busyRef.current) return;
+    switch (sm.state.stage) {
+      case 'idea':
+      case 'script': void runScriptGen(); break;
+      case 'storyboard': void runStoryboardGen(); break;
+      case 'voice': void runVoiceMatch(); break;
+      case 'video': void runRender(); break;
     }
-  }, [syncState, sm, router, runIdeaAgentTurn, maybeGenerateTitle]);
+  }, [projectId, sm, runScriptGen, runStoryboardGen, runVoiceMatch, runRender]);
 
-  // Handle action (script confirm / voice / video one-click)
-  const handleAction = useCallback(async (action: string) => {
-    if (!projectId || loading) return;
-
-    if (sm.state.stage === 'script' && sm.state.step === 'expand') {
-      setMessages((m) => [...m, makeUserMessage(action)]);
-      setLoading(true);
-      try {
-        await updateScript.mutateAsync({ content: selectedScript, expected_version_no: script?.version_no ?? 0 });
-        sm.confirm();
-        syncState();
-        setMessages((m) => [...m, msg('ai', '✅ 剧本已保存，开始生成分镜...'), getAgentMessage(sm.state)]);
-      } catch {
-        setMessages((m) => [...m, { id: `msg-saverr-${Date.now()}`, role: 'ai' as const, type: 'action' as const, text: '保存剧本失败。', action: { label: '重试保存', description: '点击重新保存', icon: '↻' }, timestamp: Date.now() }]);
-      } finally {
-        setLoading(false);
-      }
-      return;
-    }
-
-    if (sm.state.stage === 'voice') {
-      sm.startVoiceMatch();
-      syncState();
-      setMessages((m) => [...m, makeUserMessage(action), getAgentMessage(sm.state)]);
-      setLoading(true);
-      try {
-        const res = await voiceMatch({ project_id: projectId, content: script?.content ?? '', auto_assign: true });
-        sm.completeVoice();
-        syncState();
-        const n = res.matches?.length ?? 0;
-        setMessages((m) => [...m, msg('ai', `✅ 已为 ${n} 个角色匹配配音。`), getAgentMessage(sm.state)]);
-      } catch {
-        setMessages((m) => [...m, { id: `msg-verr-${Date.now()}`, role: 'ai' as const, type: 'action' as const, text: '配音匹配失败。', action: { label: '重试配音', description: '点击重新匹配', icon: '↻' }, timestamp: Date.now() }]);
-      } finally {
-        setLoading(false);
-      }
-      return;
-    }
-
-    if (sm.state.stage === 'video') {
-      sm.startRender();
-      syncState();
-      setMessages((m) => [...m, makeUserMessage(action), getAgentMessage(sm.state)]);
-      setLoading(true);
-      try {
-        const job = await createRender(
-          { project_id: projectId, resolution: '1080p', format: 'mp4' },
-          `render-${projectId}-${Date.now()}`,
-        );
-        const result = await pollRender(job.job_id, () => {
-          setMessages((m) => [...m, msg('ai', '比预期久一点，还在渲染中...')]);
-        });
-        if (result.ok) {
-          sm.completeRender();
-          syncState();
-          setMessages((m) => [...m, getAgentMessage(sm.state)]);
-        } else {
-          throw new Error('render failed');
-        }
-      } catch {
-        setMessages((m) => [...m, { id: `msg-rerr-${Date.now()}`, role: 'ai' as const, type: 'action' as const, text: '渲染遇到问题。', action: { label: '重试渲染', description: '点击重新生成视频', icon: '↻' }, timestamp: Date.now() }]);
-      } finally {
-        setLoading(false);
-      }
-      return;
-    }
-  }, [projectId, loading, script, sm, syncState, updateScript, selectedScript]);
-
-  // Handle node click (simplified for tldraw - used for script candidate selection)
+  // 点选画布节点 → 记录聚焦目标，并发起一轮带 focus 上下文的对话（不再写死台词）。
   const handleNodeClick = useCallback((nodeId: string) => {
-    const isCandidate = nodeId.startsWith('candidate-');
-    const inSelectionStep = sm.state.stage === 'script' && sm.state.step === 'show_options';
-
-    if (isCandidate) {
-      if (!inSelectionStep || selection) return;
-      const idx = parseInt(nodeId.match(/(\d+)$/)?.[1] ?? '0', 10);
-      const chosen = scriptCandidates[idx]?.content ?? '';
-      setSelection({ selectedId: nodeId });
-      window.setTimeout(() => {
-        setSelectedScript(chosen);
-        sm.selectCard(nodeId);
-        syncState();
-        setSelection(null);
-        setMessages((m) => [...m, getAgentMessage(sm.state, { scriptPreview: chosen })]);
-      }, 500);
-      return;
-    }
-
     sm.focusNode(nodeId);
     syncState();
-    setMessages((m) => [...m, getAgentMessage(sm.state, { focusedNodeLabel: nodeId })]);
-  }, [sm, syncState, selection, scriptCandidates]);
+    setMessages((m) => [...m, makeSystemMessage(`📍 聚焦：${nodeId}`)]);
+    void runAgentTurn(`我想聊聊画布上的「${nodeId}」这个节点。`);
+  }, [sm, syncState, runAgentTurn]);
 
   // Pick an asset from the library → drop a note for it at the viewport center.
   const handleAssetPick = useCallback((assetId: string, name: string) => {

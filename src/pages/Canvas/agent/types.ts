@@ -1,13 +1,12 @@
 export type Stage = 'idea' | 'script' | 'storyboard' | 'voice' | 'video';
 
-export type IdeaStep = 'greeting' | 'ask_type' | 'ask_style' | 'ask_duration' | 'ask_audience';
-export type ScriptStep = 'generate' | 'show_options' | 'expand';
-export type StoryboardStep = 'generate_scene' | 'complete';
-export type VoiceStep = 'offer' | 'matching';
-export type VideoStep = 'offer' | 'rendering' | 'done';
-export type ContextEditStep = 'editing';
-
-export type Step = IdeaStep | ScriptStep | StoryboardStep | VoiceStep | VideoStep | ContextEditStep;
+// 退化后的步骤：不再是 idea 四步问答 / 各阶段细分流程，而是统一的进度态。
+//   chatting   — 正在对话（默认态）
+//   generating — 剧本/分镜生成中
+//   matching   — 配音匹配中
+//   rendering  — 视频渲染中
+//   ready      — 当前阶段产物已就绪
+export type Step = 'chatting' | 'generating' | 'matching' | 'rendering' | 'ready';
 
 export interface IdeaContext {
   type?: string;
@@ -15,26 +14,15 @@ export interface IdeaContext {
   duration?: string;
   audience?: string;
   tone?: string;
+  theme?: string;
 }
 
-export interface Decision {
-  stage: Stage;
-  step: Step;
-  chosen: string;
-  alternatives: string[];
-  timestamp: number;
-}
-
-export type EditAction = 'change_style' | 'edit_content' | 'regenerate';
-
+// 阶段追踪器的状态：只剩 stage/step、累积的创意设定、当前聚焦节点。
 export interface AgentState {
   stage: Stage;
   step: Step;
   ideaContext: IdeaContext;
   focusedNodeId: string | null;
-  previousStep: { stage: Stage; step: Step } | null;
-  history: Decision[];
-  lastEditAction: EditAction | null;
 }
 
 export type MessageType = 'text' | 'thinking' | 'options' | 'card-group' | 'preview' | 'progress' | 'action' | 'context-switch';

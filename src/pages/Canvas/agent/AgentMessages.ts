@@ -1,122 +1,59 @@
-import type { AgentState, ChatMessage } from './types';
+import type { ChatMessage } from './types';
 
-interface MessageContext {
-  projectName?: string;
-  scriptScenes?: number;
-  shotCount?: number;
-  focusedNodeLabel?: string;
-  scriptPreview?: string;
-}
+// 退化后：不再有任何「按 stage/step 写死台词」的生成器——全程对话文案来自
+// 后端 chat() agent。这里只保留纯粹的消息构造工具。
 
 let msgCounter = 0;
-function makeMsg(partial: Omit<ChatMessage, 'id' | 'role' | 'timestamp'> & { role?: ChatMessage['role'] }): ChatMessage {
-  return { id: `msg-${++msgCounter}`, role: 'ai', timestamp: Date.now(), ...partial };
+function nextId(prefix: string): string {
+  return `msg-${prefix}-${++msgCounter}`;
 }
 
-export function getAgentMessage(state: AgentState, ctx?: MessageContext): ChatMessage {
-  if (state.step === 'editing' && state.focusedNodeId) {
-    const label = ctx?.focusedNodeLabel ?? state.focusedNodeId;
-    return makeMsg({
-      type: 'text',
-      text: `📍 切换到: ${label}\n需要调整什么？我可以换风格、改内容、或重新生成。`,
-      options: [
-        { label: '换风格', value: 'change_style' },
-        { label: '修改内容', value: 'edit_content' },
-        { label: '重新生成', value: 'regenerate' },
-        { label: '返回主线', value: 'exit_focus' },
-      ],
-    });
-  }
-
-  switch (state.stage) {
-    case 'idea':
-      return getIdeaMessage(state);
-    case 'script':
-      return getScriptMessage(state, ctx);
-    case 'storyboard':
-      return getStoryboardMessage(state);
-    case 'voice':
-      return getVoiceMessage(state, ctx);
-    case 'video':
-      return getVideoMessage(state);
-    default:
-      return makeMsg({ type: 'text', text: '有什么我可以帮你的？' });
-  }
-}
-
-function getVoiceMessage(state: AgentState, ctx?: MessageContext): ChatMessage {
-  switch (state.step) {
-    case 'matching':
-      return makeMsg({ type: 'progress', text: '🎙 正在为角色匹配配音...', progress: { current: 0, total: 1, label: '配音匹配中' } });
-    case 'offer':
-    default:
-      return makeMsg({ type: 'action', text: '分镜已就绪！接下来给角色配音：', action: { label: '一键配音', description: `${ctx?.shotCount ?? 0} 个镜头 · 预计 20 秒`, icon: '🎙' } });
-  }
-}
-
-function getVideoMessage(state: AgentState): ChatMessage {
-  switch (state.step) {
-    case 'rendering':
-      return makeMsg({ type: 'progress', text: '🎬 正在渲染视频...', progress: { current: 0, total: 1, label: '渲染中' } });
-    case 'done':
-      return makeMsg({ type: 'text', text: '🎉 视频已生成！可以在右上角预览或下载。需要调整哪个部分，点击画布节点告诉我。' });
-    case 'offer':
-    default:
-      return makeMsg({ type: 'action', text: '配音完成！最后一步生成视频：', action: { label: '生成视频', description: '预计时长 1:30 · 1080p', icon: '🎬' } });
-  }
-}
-
-function getIdeaMessage(state: AgentState): ChatMessage {
-  switch (state.step) {
-    case 'greeting':
-      return makeMsg({ type: 'text', text: '嗨，我是你的创作搭档。想做个什么样的短片？随便聊聊就行——一句话的灵感、一个画面、或者一个还没想清楚的念头都可以。' });
-    case 'ask_type':
-      return makeMsg({ type: 'text', text: '想做成哪种形式？比如二次元漫剧、真人短剧、还是动画短片。直接说你脑子里的画面就好。' });
-    case 'ask_style':
-      return makeMsg({ type: 'text', text: '风格上有什么偏好吗？像日系动漫、美漫、水墨国风、电影质感这些方向，或者你心里已经有的感觉。' });
-    case 'ask_duration':
-      return makeMsg({ type: 'text', text: '大概想做多长？30 秒的快节奏、1 分钟的小故事，还是 2-3 分钟铺得开一点。' });
-    case 'ask_audience':
-      return makeMsg({ type: 'text', text: '主要想给谁看？年轻人、全年龄、还是某个特定人群。说完这些我就能开始帮你搭故事了。' });
-    default:
-      return makeMsg({ type: 'text', text: '好，我们开始吧。' });
-  }
-}
-
-function getScriptMessage(state: AgentState, ctx?: MessageContext): ChatMessage {
-  switch (state.step) {
-    case 'generate':
-      return makeMsg({ type: 'progress', text: '正在构思剧本方向...', progress: { current: 0, total: 3, label: '生成中' } });
-    case 'show_options':
-      return makeMsg({ type: 'text', text: '为你准备了 3 个剧本方向，已放到画布上 👉 点选你喜欢的那个。' });
-    case 'expand': {
-      const preview = (ctx?.scriptPreview ?? '').slice(0, 160);
-      return makeMsg({
-        type: 'action',
-        text: preview ? `已选定这个方向：\n\n${preview}${preview.length >= 160 ? '…' : ''}` : '已选定剧本方向。',
-        action: { label: '确认剧本', description: '保存并开始生成分镜', icon: '✅' },
-      });
-    }
-    default:
-      return makeMsg({ type: 'text', text: '继续创作剧本...' });
-  }
-}
-
-function getStoryboardMessage(state: AgentState): ChatMessage {
-  switch (state.step) {
-    case 'generate_scene':
-      return makeMsg({ type: 'progress', text: '🎨 正在生成分镜...', progress: { current: 0, total: 1, label: '生成分镜' } });
-    case 'complete':
-      return makeMsg({ type: 'text', text: '🎉 分镜已生成！接下来可以配音或直接生成视频。' });
-    default:
-      return makeMsg({ type: 'text', text: '继续生成分镜...' });
-  }
-}
-
+/** 用户消息。 */
 export function makeUserMessage(text: string): ChatMessage {
-  return { id: `msg-${++msgCounter}`, role: 'user', type: 'text', text, timestamp: Date.now() };
+  return { id: nextId('user'), role: 'user', type: 'text', text, timestamp: Date.now() };
 }
 
+/** AI 文本消息（可带 thinking / 动态 options，对应 chat() 的一轮回应）。 */
+export function makeAiMessage(
+  text: string,
+  extra?: { thinking?: string; options?: { label: string; value: string }[] },
+): ChatMessage {
+  return {
+    id: nextId('ai'),
+    role: 'ai',
+    type: 'text',
+    text,
+    thinking: extra?.thinking || undefined,
+    options: extra?.options?.length ? extra.options : undefined,
+    timestamp: Date.now(),
+  };
+}
+
+/** 系统提示（轻量上下文切换提示，如「↩ 返回主线」）。 */
 export function makeSystemMessage(text: string): ChatMessage {
-  return { id: `msg-${++msgCounter}`, role: 'system', type: 'context-switch', text, timestamp: Date.now() };
+  return { id: nextId('sys'), role: 'system', type: 'context-switch', text, timestamp: Date.now() };
+}
+
+/** 进度消息（生成/匹配/渲染进行中）。 */
+export function makeProgressMessage(text: string, label: string): ChatMessage {
+  return {
+    id: nextId('prog'),
+    role: 'ai',
+    type: 'progress',
+    text,
+    progress: { current: 0, total: 1, label },
+    timestamp: Date.now(),
+  };
+}
+
+/** 错误 + 重试动作消息。 */
+export function makeErrorAction(text: string, label: string, description: string): ChatMessage {
+  return {
+    id: nextId('err'),
+    role: 'ai',
+    type: 'action',
+    text,
+    action: { label, description, icon: '↻' },
+    timestamp: Date.now(),
+  };
 }
