@@ -47,7 +47,7 @@
 
 ## P5. 整体验收
 
-- [ ] P5.1 运行构建/类型检查(`pnpm build`)无报错;`pnpm lint` 无新增告警
-- [ ] P5.2 运行测试 `pnpm test`,确认 P2.7 重写后的 `canvas-agent.test.ts` 与候选选择相关测试全绿
-- [ ] P5.3 端到端走查(Playwright `e2e/`):新建项目 → idea 对话 → 选剧本 → 分镜 → 配音 → 视频全链路,确认交互连贯、画布与对话一致、无悬空控件
-- [ ] P5.4 合并顺序:本 change 与 `improve-dark-mode` 都改 `Canvas/index.tsx`,建议在 dark-mode 合入后再落地,合并时重点关注 `CanvasSync` 附近冲突
+- [x] P5.1 运行构建/类型检查(`pnpm build`)无报错;`pnpm lint` 无新增告警(仅剩既有 `useTheme.ts` 问题,属 improve-dark-mode)
+- [x] P5.2 运行测试 `pnpm test`,确认 P2.7 重写后的 `canvas-agent.test.ts` 与候选选择相关测试全绿(37 passed)
+- [~] P5.3 端到端走查(Playwright `e2e/`):**需完整后端栈 + 真 LLM key,本环境无法执行**;已在 `VERIFICATION.md` 给出手动验收清单与执行条件
+- [x] P5.4 合并顺序:本 change 与 `improve-dark-mode` 都改 `Canvas/index.tsx`,建议在 dark-mode 合入后再落地,合并时重点关注 `CanvasSync` 附近冲突(详见 `VERIFICATION.md`)
