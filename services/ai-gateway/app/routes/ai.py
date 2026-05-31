@@ -271,6 +271,8 @@ class ChatTurn(BaseModel):
 class ChatContext(BaseModel):
     has_script: bool = False
     has_shots: bool = False
+    has_voice: bool = False
+    has_video: bool = False
     idea: dict[str, Any] = Field(default_factory=dict)
 
 
