@@ -1,4 +1,4 @@
-import type { ChatMessage } from './types';
+import type { ChatMessage, CardOption } from './types';
 
 // 退化后：不再有任何「按 stage/step 写死台词」的生成器——全程对话文案来自
 // 后端 chat() agent。这里只保留纯粹的消息构造工具。
@@ -42,6 +42,18 @@ export function makeProgressMessage(text: string, label: string): ChatMessage {
     type: 'progress',
     text,
     progress: { current: 0, total: 1, label },
+    timestamp: Date.now(),
+  };
+}
+
+/** 卡片组消息（如剧本候选三选一，作为对话内的决策呈现）。 */
+export function makeCardGroupMessage(text: string, cards: CardOption[]): ChatMessage {
+  return {
+    id: nextId('cards'),
+    role: 'ai',
+    type: 'card-group',
+    text,
+    cards,
     timestamp: Date.now(),
   };
 }

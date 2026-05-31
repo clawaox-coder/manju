@@ -31,19 +31,19 @@
 
 ## P3. 剧本候选移入对话(依赖 P2)
 
-- [ ] P3.1 `chat/ChatPanel.tsx`:实现 `card-group` 消息类型渲染(读 `ChatMessage.cards`/`CardOption`),卡片显示标题 + 内容预览,可点选
-- [ ] P3.2 `index.tsx`:剧本候选生成后以 `card-group` 消息推入对话,移除「已放到画布上 👉 点选」式文案
-- [ ] P3.3 `index.tsx`:点选候选卡 → 作为一次用户 turn 回填对话并确认所选方向;移除 `handleNodeClick` 的 `candidate-` 分支与 `scriptCandidates` 的画布耦合
-- [ ] P3.4 验证:生成多个剧本方向时卡片在对话内可见可选;选定后正确推进到分镜阶段,全程无「指向空画布」
+- [x] P3.1 `chat/ChatPanel.tsx`:实现 `card-group` 消息类型渲染(读 `ChatMessage.cards`/`CardOption`),卡片显示标题 + 内容预览,可点选
+- [x] P3.2 `index.tsx`:剧本候选生成后以 `card-group` 消息推入对话,移除「已放到画布上 👉 点选」式文案
+- [x] P3.3 `index.tsx`:点选候选卡 → 作为一次用户 turn 回填对话并确认所选方向;移除 `handleNodeClick` 的 `candidate-` 分支与 `scriptCandidates` 的画布耦合
+- [x] P3.4 验证:生成多个剧本方向时卡片在对话内可见可选;选定后正确推进到分镜阶段,全程无「指向空画布」
 
 ## P4. 画布作为只读可视化镜子(可与 P3 并行;P4.3 依赖 P2)
 
 - [x] P4.1 Spike(半天):验证 tldraw v5 arrow binding 手感——最小用例 2 个 note + 1 条 bound arrow,移动节点验证连线跟随;手感不佳则降级为「只渲染节点 + 布局列暗示上下游」。结论写回 `design.md` Decision 4
-- [ ] P4.2 写通用 `manjuNode` ShapeUtil:`props.nodeType` 切 script/storyboard/video/character/ai 渲染,`component()` 复用既有节点组件主体(去掉 framer mount 动画改 CSS),节点 `isLocked` 保持只读
-- [ ] P4.3 `CanvasSync`(`index.tsx`):不再一律 `note`,按 type 用 `manjuNode` 渲染语义信息(剧本标题/分镜对白与缩略图/角色/视频状态),并按 P4.1 结论绘制 `buildGraph` 的 edges
-- [ ] P4.4 联动:对话推进改变 stage → 画布高亮当前阶段对应节点;点画布节点 → 触发一轮带 `focus` 上下文的 `chat()`(依赖 P2 的 `runAgentTurn`),移除 `focusNode` 写死台词分支
-- [ ] P4.5 死代码处置:依 P4.1/P4.2 结论,接入 `ScriptNode`/`StoryboardNode`/`VideoNode`/`CharacterNode`/`AINode` + `canvas/useCanvasLayout.ts`/`nodeMotion.ts`/`useContextFocus.ts`,或整体删除——结束时无任何无人 import 的组件
-- [ ] P4.6 验证:节点显示与类型相符的信息且有连线(或降级形态);对话推进时画布自动更新;点节点能在对话聚焦
+- [x] P4.2 写通用 `manjuNode` ShapeUtil:`props.nodeType` 切 script/storyboard/video/character/ai 渲染,`component()` 复用既有节点组件主体(去掉 framer mount 动画改 CSS),节点 `isLocked` 保持只读
+- [x] P4.3 `CanvasSync`(`index.tsx`):不再一律 `note`,按 type 用 `manjuNode` 渲染语义信息(剧本标题/分镜对白与缩略图/角色/视频状态),并按 P4.1 结论绘制 `buildGraph` 的 edges
+- [x] P4.4 联动:对话推进改变 stage → 画布高亮当前阶段对应节点;点画布节点 → 触发一轮带 `focus` 上下文的 `chat()`(依赖 P2 的 `runAgentTurn`),移除 `focusNode` 写死台词分支
+- [x] P4.5 死代码处置:依 P4.1/P4.2 结论,接入 `ScriptNode`/`StoryboardNode`/`VideoNode`/`CharacterNode`/`AINode` + `canvas/useCanvasLayout.ts`/`nodeMotion.ts`/`useContextFocus.ts`,或整体删除——结束时无任何无人 import 的组件
+- [x] P4.6 验证:节点显示与类型相符的信息且有连线(或降级形态);对话推进时画布自动更新;点节点能在对话聚焦
 
 ## P5. 整体验收
 

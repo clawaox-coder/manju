@@ -8,7 +8,7 @@ import { CanvasToolbar } from './CanvasToolbar';
 import { AssetLibraryPanel } from './AssetLibraryPanel';
 import { AccountMenu } from '@/components/layout/AccountMenu';
 import { AgentStateMachine } from './agent/AgentStateMachine';
-import { makeUserMessage, makeAiMessage, makeProgressMessage, makeErrorAction, makeSystemMessage } from './agent/AgentMessages';
+import { makeUserMessage, makeAiMessage, makeProgressMessage, makeErrorAction, makeSystemMessage, makeCardGroupMessage } from './agent/AgentMessages';
 import type { ChatMessage, Stage } from './agent/types';
 import { useStore } from '@/store';
 import { useEffectiveTheme } from '@/hooks/useTheme';
@@ -18,6 +18,9 @@ import { useProjects, useUpdateProject } from '@/hooks/useProjectApi';
 import { voiceMatch, streamScriptContinue, storyboardGenerate, getAiTask, chat, generateTitle, type ChatTrigger } from '@/lib/api/ai';
 import { createRender, getRender } from '@/lib/api/render';
 import { buildCanvasGraph } from './buildGraph';
+import { ManjuNodeUtil, MANJU_NODE_SIZE, type ManjuNodeType, type ManjuNodeProps } from './canvas/ManjuNodeUtil';
+
+const MANJU_SHAPE_UTILS = [ManjuNodeUtil];
 
 const RENDER_TERMINAL = ['done', 'failed', 'cancelled'];
 const RENDER_POLL_MS = 2000;
@@ -92,7 +95,42 @@ interface CanvasGraphNode {
     style?: string;
     duration?: string;
     status?: string;
+    label?: string;
+    model?: string;
+    avatar?: string;
+    sceneNumber?: number;
+    shotNumber?: number;
+    imageUrl?: string;
   };
+}
+
+interface CanvasGraphEdge {
+  id: string;
+  source: string;
+  target: string;
+}
+
+// 把 buildGraph 的 node.data 按 type 映射成 manjuNode 的扁平 props。
+function toManjuProps(node: CanvasGraphNode): ManjuNodeProps {
+  const d = node.data ?? {};
+  const nodeType = (['script', 'storyboard', 'character', 'ai', 'video'].includes(node.type ?? '')
+    ? node.type : 'script') as ManjuNodeType;
+  const size = MANJU_NODE_SIZE[nodeType];
+  const base = { ...size, nodeType, title: d.title ?? node.id, body: '', badge: '', imageUrl: '', status: '' };
+  switch (nodeType) {
+    case 'script':
+      return { ...base, badge: d.sceneNumber ? String(d.sceneNumber) : '', body: d.content ?? '' };
+    case 'storyboard':
+      return { ...base, badge: d.style ?? '', body: d.dialog ?? '', imageUrl: d.imageUrl ?? '' };
+    case 'character':
+      return { ...base, title: d.name ?? d.title ?? '角色', body: d.description ?? '', imageUrl: d.avatar ?? '' };
+    case 'ai':
+      return { ...base, title: d.label ?? d.title ?? 'AI', badge: d.model ?? '', status: d.status ?? 'idle' };
+    case 'video':
+      return { ...base, badge: d.duration ?? '', body: '等待素材', status: d.status ?? 'waiting' };
+    default:
+      return base;
+  }
 }
 
 function stripShapePrefix(shapeId: string): string {
@@ -100,16 +138,17 @@ function stripShapePrefix(shapeId: string): string {
 }
 
 
-// Sync graph nodes to tldraw shapes
+// 把 graph 同步成 tldraw 自定义 manjuNode + bound arrow 连线（只读镜子）。
 function CanvasSync({
   graph,
   onNodeSelect,
 }: {
-  graph: { nodes: CanvasGraphNode[] };
+  graph: { nodes: CanvasGraphNode[]; edges: CanvasGraphEdge[] };
   onNodeSelect?: (nodeId: string) => void;
 }) {
   const editor = useEditor();
   const syncedRef = useRef(new Set<string>());
+  const syncedEdgesRef = useRef(new Set<string>());
   const selectedShapeIds = useValue('selectedShapeIds', () => editor.getSelectedShapeIds().map((id) => String(id)), [editor]);
   const lastSelectedRef = useRef<string | null>(null);
   const effectiveTheme = useEffectiveTheme();
@@ -124,52 +163,58 @@ function CanvasSync({
   useEffect(() => {
     if (!editor || !graph.nodes.length) return;
     const existing = syncedRef.current;
-    const currentIds = new Set(graph.nodes.map(n => n.id));
+    const currentIds = new Set(graph.nodes.map((n) => n.id));
 
-    // Remove shapes that no longer exist
-    const toRemove = [...existing].filter(id => !currentIds.has(id));
-    if (toRemove.length) {
-      editor.deleteShapes(toRemove.map(id => createShapeId(id)));
-    }
+    // 所有写操作包在 run(ignoreShapeLock) 里：节点 isLocked 挡用户拖动，但代码可摆位
+    // （P4.1 spike 结论）。StrictMode 双调时已存在的节点走 update 分支，幂等。
+    editor.run(() => {
+      // 删掉不再存在的节点（其相连 arrow 由 tldraw 随绑定一并清理）。
+      const toRemove = [...existing].filter((id) => !currentIds.has(id));
+      if (toRemove.length) {
+        editor.deleteShapes(toRemove.map((id) => createShapeId(id)));
+      }
 
-    // Create/update shapes
-    for (const node of graph.nodes) {
-      const shapeId = createShapeId(node.id);
-      const label = node.data?.title || node.id;
-      const nextX = node.position?.x ?? Math.random() * 800;
-      const nextY = node.position?.y ?? Math.random() * 600;
-      if (!existing.has(node.id)) {
-        editor.createShape({
-          id: shapeId,
-          type: 'note',
-          x: nextX,
-          y: nextY,
-          props: { text: label, size: 'm' },
-        } as unknown as Parameters<typeof editor.createShape>[0]);
-      } else {
-        const shape = editor.getShape(shapeId);
-        const currentText = typeof shape?.props === 'object' && shape?.props && 'text' in shape.props
-          ? String(shape.props.text ?? '')
-          : '';
-        const shapeX = typeof shape?.x === 'number' ? shape.x : undefined;
-        const shapeY = typeof shape?.y === 'number' ? shape.y : undefined;
-        if (currentText !== label || shapeX !== nextX || shapeY !== nextY) {
+      for (const node of graph.nodes) {
+        const shapeId = createShapeId(node.id);
+        const props = toManjuProps(node);
+        const x = node.position?.x ?? 0;
+        const y = node.position?.y ?? 0;
+        if (!existing.has(node.id)) {
+          editor.createShape({
+            id: shapeId, type: 'manjuNode', x, y, isLocked: true, props,
+          } as unknown as Parameters<typeof editor.createShape>[0]);
+        } else {
           editor.updateShape({
-            id: shapeId,
-            type: 'note',
-            x: nextX,
-            y: nextY,
-            props: { text: label, size: 'm' },
+            id: shapeId, type: 'manjuNode', x, y, props,
           } as unknown as Parameters<typeof editor.updateShape>[0]);
         }
       }
-    }
+
+      // 连线：为每条 edge 建一条两端 bound 到源/目标节点的 arrow（只建一次）。
+      for (const edge of graph.edges) {
+        if (syncedEdgesRef.current.has(edge.id)) continue;
+        if (!currentIds.has(edge.source) || !currentIds.has(edge.target)) continue;
+        const arrowId = createShapeId(`arrow-${edge.id}`);
+        editor.createShape({ id: arrowId, type: 'arrow', x: 0, y: 0 } as unknown as Parameters<typeof editor.createShape>[0]);
+        editor.createBindings([
+          { fromId: arrowId, toId: createShapeId(edge.source), type: 'arrow',
+            props: { terminal: 'start', normalizedAnchor: { x: 0.5, y: 0.5 }, isExact: false, isPrecise: false } },
+          { fromId: arrowId, toId: createShapeId(edge.target), type: 'arrow',
+            props: { terminal: 'end', normalizedAnchor: { x: 0.5, y: 0.5 }, isExact: false, isPrecise: false } },
+        ] as unknown as Parameters<typeof editor.createBindings>[0]);
+        editor.updateShape({ id: arrowId, isLocked: true, type: 'arrow' } as unknown as Parameters<typeof editor.updateShape>[0]);
+        syncedEdgesRef.current.add(edge.id);
+      }
+    }, { ignoreShapeLock: true });
+
     syncedRef.current = currentIds;
-  }, [editor, graph.nodes]);
+  }, [editor, graph.nodes, graph.edges]);
 
   useEffect(() => {
     if (!selectedShapeIds.length || !onNodeSelect) return;
     const nodeId = stripShapePrefix(selectedShapeIds[0]);
+    // 只对 manjuNode 节点触发聚焦（忽略 arrow 等）。
+    if (nodeId.startsWith('arrow-')) return;
     if (lastSelectedRef.current === nodeId) return;
     lastSelectedRef.current = nodeId;
     onNodeSelect(nodeId);
@@ -207,6 +252,8 @@ function CanvasInner() {
   const editorRef = useRef<ReturnType<typeof useEditor> | null>(null);
   // 防止同一制作动作并发触发（trigger 可能在连续两轮里重复出现）。
   const busyRef = useRef(false);
+  // 剧本候选内容缓存：cardId → 大纲全文（点选卡片后据此保存所选方向）。
+  const scriptCandidatesRef = useRef<Map<string, string>>(new Map());
   const syncState = useCallback(() => setAgentState({ ...sm.state }), [sm]);
   // Auto-select first project
   useEffect(() => {
@@ -235,28 +282,39 @@ function CanvasInner() {
   // ---- 制作动作：由对话 trigger 显式触发，不再由状态机 step 监听自动跑。 ----
   // 每个都自带忙碌守卫，跑完用 markReady 落进度态 + 一条结果消息。
 
-  // 剧本：用累积的创意设定生成大纲并直接保存为剧本（统一对话版不再做画布三选一，
-  // 候选改由对话卡片承载——见 P3；此处先生成一个方向并保存，进入分镜。
+  // 剧本：用累积的创意设定并行生成 3 个方向的候选，以「对话内卡片组」呈现，
+  // 等用户点选某个方向（handleSelectCard）再保存进剧本、推进到分镜。
   const runScriptGen = useCallback(async () => {
     if (!projectId || busyRef.current) return;
     busyRef.current = true;
     sm.enterBusy('script'); syncState();
-    setMessages((m) => [...m, makeProgressMessage('正在构思剧本...', '生成剧本')]);
+    setMessages((m) => [...m, makeProgressMessage('正在构思 3 个剧本方向...', '生成剧本')]);
     try {
       const { type = '漫剧', style = '日系动漫', tone, duration = '1分钟', audience = '年轻人' } = sm.state.ideaContext;
       const base = `用${type}形式、${style}风格创作一个短剧大纲（约${duration}，受众${audience}${tone ? `，${tone}基调` : ''}）。直接给出分场景大纲。`;
-      const outline = await genOutline(projectId, base);
-      const content = outline || '（生成为空）';
-      await updateScript.mutateAsync({ content, expected_version_no: script?.version_no ?? 0 });
+      const dirs = [
+        { emoji: '⚡', title: '强冲突反转', extra: '走强冲突、结尾反转路线。' },
+        { emoji: '☀️', title: '轻松日常', extra: '走轻松幽默的日常喜剧路线。' },
+        { emoji: '🌙', title: '细腻情感', extra: '走细腻情感、人物弧光路线。' },
+      ];
+      const outlines = await Promise.all(dirs.map((d) => genOutline(projectId, base + d.extra)));
+      const cards = dirs.map((d, i) => ({
+        id: `script-cand-${i}`,
+        emoji: d.emoji,
+        title: d.title,
+        description: outlines[i] || '（生成为空）',
+      }));
+      // 缓存内容供点选时取用。
+      scriptCandidatesRef.current = new Map(cards.map((c) => [c.id, c.description]));
       sm.markReady('script'); syncState();
-      setMessages((m) => [...m, makeAiMessage('剧本初稿好了，已经放到画布上。想调哪段、或者直接进分镜，告诉我就行。')]);
+      setMessages((m) => [...m, makeCardGroupMessage('给你三个方向，点一个我就照着展开成完整剧本：', cards)]);
     } catch {
       sm.markReady('idea'); syncState();
       setMessages((m) => [...m, makeErrorAction('生成剧本时出错了。', '重试生成', '点击重新生成剧本')]);
     } finally {
       busyRef.current = false;
     }
-  }, [projectId, sm, syncState, updateScript, script]);
+  }, [projectId, sm, syncState]);
 
   const runStoryboardGen = useCallback(async () => {
     if (!projectId || busyRef.current) return;
@@ -421,6 +479,26 @@ function CanvasInner() {
     void runAgentTurn(value);
   }, [runAgentTurn]);
 
+  // 点选剧本候选卡：取出该方向全文 → 保存进剧本 → 停在 script/ready，
+  // 引导用户继续聊改或进分镜（进分镜由对话 trigger 触发）。
+  const handleSelectCard = useCallback(async (cardId: string) => {
+    if (!projectId || busyRef.current) return;
+    const content = scriptCandidatesRef.current.get(cardId);
+    if (!content) return;
+    busyRef.current = true;
+    setMessages((m) => [...m, makeUserMessage('就用这个方向')]);
+    try {
+      await updateScript.mutateAsync({ content, expected_version_no: script?.version_no ?? 0 });
+      scriptCandidatesRef.current.clear();
+      sm.markReady('script'); syncState();
+      setMessages((m) => [...m, makeAiMessage('好，这个方向已经定下来，画布上能看到完整剧本了。想再调哪段，或者直接说"开始分镜"。')]);
+    } catch {
+      setMessages((m) => [...m, makeErrorAction('保存剧本失败。', '重试保存', '点击重新保存所选方向')]);
+    } finally {
+      busyRef.current = false;
+    }
+  }, [projectId, sm, syncState, updateScript, script]);
+
   // 自由输入：全程统一走 runAgentTurn（idea 阶段顺带生成标题）。
   const handleSendMessage = useCallback(async (text: string) => {
     setMessages((m) => [...m, makeUserMessage(text)]);
@@ -467,7 +545,7 @@ function CanvasInner() {
 
   // Build graph
   const graph = useMemo(
-    () => buildCanvasGraph(script, shots, characters?.data, projectName, 'idle', undefined, projectId, undefined),
+    () => buildCanvasGraph(script, shots, characters?.data, projectName, 'idle', undefined, projectId),
     [script, shots, characters?.data, projectName, projectId],
   );
   const suggestedPrompts = useMemo(() => {
@@ -492,6 +570,7 @@ function CanvasInner() {
         messages={messages}
         onSendMessage={handleSendMessage}
         onSelectOption={handleSelectOption}
+        onSelectCard={handleSelectCard}
         onAction={handleAction}
         loading={loading}
         stage={STAGE_LABELS[agentState.stage]}
@@ -525,7 +604,7 @@ function CanvasInner() {
           <FolderOpen className="w-4 h-4 text-primary" />
           资产库
         </button>
-        <Tldraw hideUi onMount={(editor) => { editorRef.current = editor; }}>
+        <Tldraw hideUi shapeUtils={MANJU_SHAPE_UTILS} onMount={(editor) => { editorRef.current = editor; }}>
           <CanvasSync graph={graph} onNodeSelect={handleNodeClick} />
           <CanvasToolbar />
         </Tldraw>

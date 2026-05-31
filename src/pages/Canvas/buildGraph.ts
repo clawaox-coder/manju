@@ -51,12 +51,6 @@ function formatDuration(ms: number): string {
   return `${String(m).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
 }
 
-export interface CandidateNode {
-  id: string;
-  type: string;
-  data: Record<string, unknown>;
-}
-
 export function buildCanvasGraph(
   script: ScriptDTO | undefined,
   shots: ShotDTO[] | undefined,
@@ -65,7 +59,6 @@ export function buildCanvasGraph(
   aiStatus: 'idle' | 'running' | 'done' | 'error' = 'idle',
   onRunAi?: () => void,
   projectId?: string | null,
-  candidateNodes?: CandidateNode[],
 ): { nodes: CanvasNode[]; edges: CanvasEdge[] } {
   const nodes: CanvasNode[] = [];
   const edges: CanvasEdge[] = [];
@@ -189,18 +182,6 @@ export function buildCanvasGraph(
         target: 'video-out',
         targetHandle: 'shots',
         style: { stroke: '#22c55e' },
-      });
-    });
-  }
-
-  // --- Candidate nodes (positioned by useCanvasLayout) ---
-  if (candidateNodes) {
-    candidateNodes.forEach((cn) => {
-      nodes.push({
-        id: cn.id,
-        type: cn.type,
-        position: { x: 0, y: 0 },
-        data: { nodeStatus: 'candidate', ...cn.data },
       });
     });
   }

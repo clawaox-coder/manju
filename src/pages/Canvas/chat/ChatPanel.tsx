@@ -10,6 +10,7 @@ interface ChatPanelProps {
   messages: ChatMessage[];
   onSendMessage: (text: string) => void;
   onSelectOption: (value: string) => void;
+  onSelectCard: (cardId: string) => void;
   onAction: (action: string) => void;
   loading: boolean;
   stage: string;
@@ -19,7 +20,7 @@ interface ChatPanelProps {
 }
 
 export function ChatPanel({
-  messages, onSendMessage, onSelectOption, onAction, loading,
+  messages, onSendMessage, onSelectOption, onSelectCard, onAction, loading,
   stage, suggestedPrompts, title, onTitleChange,
 }: ChatPanelProps) {
   const [input, setInput] = useState('');
@@ -158,6 +159,26 @@ export function ChatPanel({
                   )}
                 </div>
               </div>
+              {/* 剧本候选卡片组 —— 候选作为「对话内的决策」呈现，可点选 */}
+              {m.role === 'ai' && m.type === 'card-group' && m.cards && m.cards.length > 0 && (
+                <div className="mt-2 space-y-2">
+                  {m.cards.map((card) => (
+                    <button
+                      key={card.id}
+                      type="button"
+                      disabled={loading}
+                      className="group w-full text-left rounded-xl border border-border bg-card px-3.5 py-3 hover:border-primary/40 hover:bg-primary/5 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                      onClick={() => onSelectCard(card.id)}
+                    >
+                      <div className="flex items-center gap-2 mb-1">
+                        {card.emoji && <span className="text-sm">{card.emoji}</span>}
+                        <span className="text-[13px] font-medium text-foreground group-hover:text-primary transition-colors">{card.title}</span>
+                      </div>
+                      <p className="text-[12px] leading-relaxed text-muted-foreground line-clamp-3 whitespace-pre-wrap">{card.description}</p>
+                    </button>
+                  ))}
+                </div>
+              )}
               {/* Agent-generated quick replies — only on the most recent AI turn */}
               {m.role === 'ai' && m.id === lastAiId && m.options && m.options.length > 0 && !loading && (
                 <div className="flex flex-wrap gap-1.5 mt-2">
