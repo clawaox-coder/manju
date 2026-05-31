@@ -484,6 +484,179 @@ async def voice_match(
     return result
 
 
+# ---- 6. chat (对话 agent: 意图分析 + 动态选项 + 触发制作动作) ----
+
+CHAT_SYSTEM = """你是「漫剧AI」的创作搭档 Agent，陪用户从一个想法一步步做出短片。
+
+你的工作方式：分析用户最新一句话 + 对话历史 + 当前项目状态，决定这一轮怎么回应。
+你不是填表机器人。不要机械地一个个问「类型?风格?时长?受众?」。像一个有经验的导演搭档那样自然地聊，
+在聊的过程中把需要的信息（题材/风格/时长/受众/情绪基调）顺势抽取出来。
+
+创作管线分 5 个阶段：idea(找方向) → script(剧本) → storyboard(分镜) → voice(配音) → video(成片)。
+你负责 idea 阶段的自由对话，以及在用户表达「可以了/开始吧」时触发下一步制作动作。
+
+每一轮你必须输出严格的 JSON（不要任何额外解释、不要 markdown 代码块包裹）：
+{
+  "thinking": "你的简短推理（给用户看的思考过程，1-2句，可空字符串）",
+  "reply": "你要对用户说的话（自然、口语、不超过3句）",
+  "options": [{"label": "显示文字", "value": "回填到对话的值"}],
+  "extracted": {"type": "...", "style": "...", "duration": "...", "audience": "...", "theme": "...", "tone": "..."},
+  "trigger": null
+}
+
+options 规则（关键）：
+- options 是「快捷回复建议」，由你根据当前对话动态生成，帮用户省打字。不是必须的。
+- 当用户的话已经很明确、或在自由发挥时，options 给空数组 []，让他继续自由说。
+- 当你在帮他收敛方向（比如问风格倾向）时，给 2-4 个贴合当前题材的具体选项。
+- options 永远不要重复用户已经说过的信息。
+
+extracted 规则：
+- 只填你从「整个对话」里确信的字段，没提到的字段不要瞎填，留空或省略。
+- 这是累积的项目设定，前端会合并保存。
+
+trigger 规则（什么时候推进到下一步）：
+- 大多数时候是 null（继续对话）。
+- 当 idea 阶段信息够了（至少有题材方向）且用户表达「开始/可以了/生成吧/就这样」，
+  输出 {"action": "generate_script", "params": {}} 来触发剧本生成。
+- 不要催。信息不够就继续自然地聊，把缺的顺出来。"""
+
+
+async def chat_respond(
+    *,
+    team_id: str,
+    user_id: str,
+    project_id: str | None,
+    stage: str,
+    messages: list[dict],
+    context: dict,
+) -> dict:
+    """对话 agent: 一次 LLM 调用，返回结构化的一轮响应。
+
+    messages: [{"role": "user"|"assistant", "content": "..."}]
+    context: {"has_script": bool, "has_shots": bool, "idea": {...}}
+    """
+    convo = "\n".join(
+        f"{'用户' if m.get('role') == 'user' else 'AI'}: {m.get('content', '')}"
+        for m in messages[-12:]
+    )
+    prompt = (
+        f"当前阶段: {stage}\n"
+        f"项目状态: 已有剧本={context.get('has_script', False)}, "
+        f"已有分镜={context.get('has_shots', False)}\n"
+        f"已收集的创意设定: {json.dumps(context.get('idea', {}), ensure_ascii=False)}\n\n"
+        f"对话历史:\n{convo}\n\n"
+        f"请按系统提示输出这一轮的 JSON 响应。"
+    )
+    result, _ = await _run_and_record(
+        team_id=team_id, user_id=user_id, project_id=project_id,
+        task_type="chat",
+        system=CHAT_SYSTEM,
+        prompt=prompt,
+        max_tokens=1200, parse_json=True,
+    )
+    if not isinstance(result, dict):
+        result = {}
+    # 兜底：保证字段齐全，前端不必做防御
+    return {
+        "thinking": result.get("thinking", ""),
+        "reply": result.get("reply") or "嗯，我在听，继续说说你的想法？",
+        "options": result.get("options") if isinstance(result.get("options"), list) else [],
+        "extracted": result.get("extracted") if isinstance(result.get("extracted"), dict) else {},
+        "trigger": result.get("trigger"),
+    }
+
+
+# ---- 6b. intent/classify (后续阶段自由输入的意图分类) ----
+
+INTENT_CLASSIFY_SYSTEM = """你是漫剧创作流程里的意图分类器。用户在某个制作阶段自由输入了一句话，
+你要判断他的意图，并提取参数。只返回严格 JSON，不要任何解释。
+
+输出格式:
+{
+  "intent": "continue | skip | modify | back | off_topic | clarify",
+  "params": {"value": "...", "target_node": "...", "skip_to": "...", "question": "..."},
+  "confidence": 0.0-1.0
+}
+
+意图含义:
+- continue: 认可当前步骤/想推进。params.value 填提取到的选择值。
+- skip: 想跳过当前步骤直接往后。params.skip_to 填目标阶段名。
+- modify: 想修改某个已生成的内容/节点。params.target_node 填目标。
+- back: 想返回上一步/退出当前编辑。
+- off_topic: 跟创作无关。
+- clarify: 表达不清，需要追问。params.question 填要追问的话。
+
+params 里只填确信的字段，不确定就省略。"""
+
+
+async def intent_classify(
+    *,
+    team_id: str,
+    user_id: str,
+    message: str,
+    stage: str,
+    step: str,
+    context: str,
+) -> dict:
+    result, _ = await _run_and_record(
+        team_id=team_id, user_id=user_id, project_id=None,
+        task_type="intent.classify",
+        system=INTENT_CLASSIFY_SYSTEM,
+        prompt=(
+            f"当前阶段: {stage}\n当前步骤: {step}\n"
+            f"最近对话: {context}\n\n用户输入: {message}"
+        ),
+        max_tokens=400, parse_json=True,
+    )
+    if not isinstance(result, dict):
+        result = {}
+    return {
+        "intent": result.get("intent", "clarify"),
+        "params": result.get("params") if isinstance(result.get("params"), dict) else {},
+        "confidence": result.get("confidence", 0.0),
+    }
+
+
+# ---- 6c. title/generate (对话标题: 由用户首句生成简短标题) ----
+
+TITLE_SYSTEM = """你是「漫剧AI」的标题助手。用户刚说出他想做的短片的第一句话（一个灵感/画面/念头）。
+请据此为这个创作项目起一个简短、好记、有画面感的中文标题。
+
+要求：
+- 只输出标题本身，不要任何解释、引号、标点结尾、书名号。
+- 6-14 个字为宜，最长不超过 16 字。
+- 概括核心创意，不要照抄原话，也不要太抽象。
+- 如果用户的话信息太少，就起一个贴合氛围的名字，不要留空。"""
+
+
+def _clean_title(raw: str) -> str:
+    """清理 LLM 返回的标题: 去首尾空白/引号/书名号, 取首行, 限长 16 字."""
+    t = (raw or "").strip().splitlines()[0] if (raw or "").strip() else ""
+    t = t.strip().strip("\"'“”《》「」 \t").strip()
+    # 去掉可能的 "标题：" 前缀
+    t = re.sub(r"^(标题|题目|片名)[:：]\s*", "", t).strip()
+    return t[:16]
+
+
+async def generate_title(
+    *,
+    team_id: str,
+    user_id: str,
+    project_id: str | None,
+    message: str,
+) -> dict:
+    """根据用户第一句话生成一个简短的项目/对话标题. 返回 {"title": "..."}."""
+    result, _ = await _run_and_record(
+        team_id=team_id, user_id=user_id, project_id=project_id,
+        task_type="title.generate",
+        system=TITLE_SYSTEM,
+        prompt=f"用户的第一句话:\n{message}\n\n请只输出标题。",
+        max_tokens=40, parse_json=False,
+    )
+    raw = result.get("text", "") if isinstance(result, dict) else str(result)
+    return {"title": _clean_title(raw)}
+
+
 # ---- 7. TTS (OpenAI) ----
 
 VALID_TTS_VOICES = {"alloy", "echo", "fable", "onyx", "nova", "shimmer"}

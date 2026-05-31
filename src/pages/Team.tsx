@@ -89,7 +89,7 @@ export default function Team() {
                 className="px-5 py-3 flex items-center gap-3 hover:bg-accent/50"
               >
                 <Avatar className="w-10 h-10">
-                  <AvatarFallback className="bg-gradient-to-br from-purple-300 to-indigo-400 text-white font-bold">
+                  <AvatarFallback className="bg-foreground text-background font-bold">
                     {m.name.slice(0, 1)}
                   </AvatarFallback>
                 </Avatar>

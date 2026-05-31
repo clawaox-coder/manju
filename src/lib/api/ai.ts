@@ -185,3 +185,90 @@ export async function voiceMatch(input: VoiceMatchInput): Promise<VoiceMatchResu
     base: AI_BASE,
   });
 }
+
+// ---- Conversational chat agent (POST /v1/ai/chat) ----
+// The Canvas agent's free-form conversation. One request per turn; the backend
+// LLM agent reasons about stage + context and returns a structured response:
+// natural reply + dynamically-generated quick-reply options + extracted idea
+// settings + an optional trigger to fire a production action.
+
+export interface ChatTurn {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export interface ChatContext {
+  has_script?: boolean;
+  has_shots?: boolean;
+  idea?: Record<string, string>;
+}
+
+export interface ChatInput {
+  project_id?: string | null;
+  stage: string;
+  messages: ChatTurn[];
+  context?: ChatContext;
+}
+
+export interface ChatTrigger {
+  action: 'generate_script' | 'generate_storyboard' | 'match_voice' | 'render_video';
+  params?: Record<string, unknown>;
+}
+
+export interface ChatResponse {
+  thinking: string;
+  reply: string;
+  options: { label: string; value: string }[];
+  extracted: Record<string, string>;
+  trigger: ChatTrigger | null;
+}
+
+export async function chat(input: ChatInput): Promise<ChatResponse> {
+  // ai-gateway returns a raw JSON body (no {data} envelope), so we fetch
+  // directly rather than going through request() which unwraps .data.
+  const token = getAccessToken();
+  const res = await fetch(`${AI_BASE}/v1/ai/chat`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    const detail = (err as { detail?: { message?: string } })?.detail;
+    throw new Error(detail?.message || `对话请求失败: ${res.status}`);
+  }
+  return res.json() as Promise<ChatResponse>;
+}
+
+// ---- Title generation (POST /v1/ai/title) ----
+// 用用户的第一句话生成一个简短的项目/对话标题。返回裸 JSON {title}。
+
+export interface TitleInput {
+  message: string;
+  project_id?: string | null;
+}
+
+export interface TitleResponse {
+  title: string;
+}
+
+export async function generateTitle(input: TitleInput): Promise<TitleResponse> {
+  const token = getAccessToken();
+  const res = await fetch(`${AI_BASE}/v1/ai/title`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    const detail = (err as { detail?: { message?: string } })?.detail;
+    throw new Error(detail?.message || `标题生成失败: ${res.status}`);
+  }
+  return res.json() as Promise<TitleResponse>;
+}

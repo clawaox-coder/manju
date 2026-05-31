@@ -1,27 +1,13 @@
 import { Suspense, type LazyExoticComponent, type ComponentType } from 'react';
 import { createBrowserRouter, Navigate, RouterProvider } from 'react-router-dom';
-import { AppShell } from '@/components/layout/AppShell';
+import { AccountShell } from '@/components/layout/AccountShell';
 import { lazyWithRetry } from '@/lib/lazyWithRetry';
 import { getAccessToken, setTokens } from '@/lib/api/tokens';
 
 const Auth = lazyWithRetry(() => import('@/pages/Auth'));
-const Dashboard = lazyWithRetry(() => import('@/pages/Dashboard'));
-const Projects = lazyWithRetry(() => import('@/pages/Projects'));
-const Script = lazyWithRetry(() => import('@/pages/Script'));
-const Storyboard = lazyWithRetry(() => import('@/pages/Storyboard'));
-const Video = lazyWithRetry(() => import('@/pages/Video'));
+const Landing = lazyWithRetry(() => import('@/pages/Landing'));
+const Showcase = lazyWithRetry(() => import('@/pages/Showcase'));
 const Canvas = lazyWithRetry(() => import('@/pages/Canvas'));
-const Characters = lazyWithRetry(() => import('@/pages/Characters'));
-const Scenes = lazyWithRetry(() => import('@/pages/Scenes'));
-const Props = lazyWithRetry(() => import('@/pages/Props'));
-const Music = lazyWithRetry(() => import('@/pages/Music'));
-const Sfx = lazyWithRetry(() => import('@/pages/Sfx'));
-const Voice = lazyWithRetry(() => import('@/pages/Voice'));
-const Drafts = lazyWithRetry(() => import('@/pages/Drafts'));
-const Shared = lazyWithRetry(() => import('@/pages/Shared'));
-const Trash = lazyWithRetry(() => import('@/pages/Trash'));
-const Consistency = lazyWithRetry(() => import('@/pages/Consistency'));
-const Edit = lazyWithRetry(() => import('@/pages/Edit'));
 const Settings = lazyWithRetry(() => import('@/pages/Settings'));
 const Billing = lazyWithRetry(() => import('@/pages/Billing'));
 const ApiKeys = lazyWithRetry(() => import('@/pages/ApiKeys'));
@@ -31,7 +17,7 @@ const Team = lazyWithRetry(() => import('@/pages/Team'));
 const fallback = (
   <div className="flex items-center justify-center w-full h-[calc(100vh-4rem)] min-h-[400px]">
     <div className="flex items-center gap-2 text-xs text-muted-foreground">
-      <div className="w-4 h-4 rounded-full border-2 border-brand-400 border-t-transparent animate-spin" />
+      <div className="w-4 h-4 rounded-full border-2 border-foreground/50 border-t-transparent animate-spin" />
       <span>加载中...</span>
     </div>
   </div>
@@ -69,32 +55,29 @@ const router = createBrowserRouter([
   },
   {
     path: '/',
-    element: <RequireAuth><AppShell /></RequireAuth>,
+    element: lazyEl(Landing),
+  },
+  {
+    path: '/canvas',
+    element: <RequireAuth>{lazyEl(Canvas)}</RequireAuth>,
+  },
+  {
+    path: '/home',
+    element: <RequireAuth>{lazyEl(Showcase)}</RequireAuth>,
+  },
+  {
+    path: '/account',
+    element: <RequireAuth><AccountShell /></RequireAuth>,
     children: [
-      { index: true, element: lazyEl(Dashboard) },
-      { path: 'projects', element: lazyEl(Projects) },
-      { path: 'script', element: lazyEl(Script) },
-      { path: 'storyboard', element: lazyEl(Storyboard) },
-      { path: 'video', element: lazyEl(Video) },
-      { path: 'characters', element: lazyEl(Characters) },
-      { path: 'scenes', element: lazyEl(Scenes) },
-      { path: 'props', element: lazyEl(Props) },
-      { path: 'music', element: lazyEl(Music) },
-      { path: 'sfx', element: lazyEl(Sfx) },
-      { path: 'voice', element: lazyEl(Voice) },
-      { path: 'drafts', element: lazyEl(Drafts) },
-      { path: 'shared', element: lazyEl(Shared) },
-      { path: 'trash', element: lazyEl(Trash) },
-      { path: 'consistency', element: lazyEl(Consistency) },
-      { path: 'edit', element: lazyEl(Edit) },
+      { index: true, element: <Navigate to="/account/settings" replace /> },
       { path: 'settings', element: lazyEl(Settings) },
       { path: 'team', element: lazyEl(Team) },
       { path: 'billing', element: lazyEl(Billing) },
       { path: 'apikeys', element: lazyEl(ApiKeys) },
       { path: 'help', element: lazyEl(Help) },
-      { path: 'canvas', element: lazyEl(Canvas) }
     ]
-  }
+  },
+  { path: '*', element: <Navigate to="/" replace /> },
 ]);
 
 export function AppRouter() {

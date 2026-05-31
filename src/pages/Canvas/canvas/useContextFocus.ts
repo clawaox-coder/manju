@@ -1,7 +1,9 @@
 import { useMemo } from 'react';
-import type { Node } from '@xyflow/react';
+import type { CanvasNode } from '../buildGraph';
 
-export function applyFocus(nodes: Node[], focusedNodeId: string | null): Node[] {
+type FocusNode = CanvasNode & { className?: string; style?: Record<string, string | number> };
+
+export function applyFocus(nodes: FocusNode[], focusedNodeId: string | null): FocusNode[] {
   if (!focusedNodeId) return nodes;
 
   return nodes.map((node) => {
@@ -12,6 +14,6 @@ export function applyFocus(nodes: Node[], focusedNodeId: string | null): Node[] 
   });
 }
 
-export function useContextFocus(nodes: Node[], focusedNodeId: string | null): Node[] {
+export function useContextFocus(nodes: FocusNode[], focusedNodeId: string | null): FocusNode[] {
   return useMemo(() => applyFocus(nodes, focusedNodeId), [nodes, focusedNodeId]);
 }

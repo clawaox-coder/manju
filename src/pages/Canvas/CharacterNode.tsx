@@ -1,5 +1,8 @@
 import { memo } from 'react';
-import { Handle, Position, type NodeProps } from '@xyflow/react';
+
+interface NodeProps {
+  data: unknown;
+}
 
 export interface CharacterNodeData {
   name: string;
@@ -13,7 +16,7 @@ export const CharacterNode = memo(({ data }: NodeProps) => {
   return (
     <div className="bg-card border border-border rounded-xl shadow-lg w-[160px] overflow-hidden">
       <div className="p-3 flex flex-col items-center text-center">
-        <div className="w-14 h-14 rounded-full bg-gradient-to-br from-pink-400 to-purple-500 flex items-center justify-center text-white text-lg font-bold mb-2">
+        <div className="w-14 h-14 rounded-full bg-foreground flex items-center justify-center text-background text-lg font-bold mb-2">
           {avatar ? <img src={avatar} className="w-full h-full rounded-full object-cover" /> : name[0]}
         </div>
         <div className="text-xs font-semibold">{name}</div>
@@ -24,8 +27,6 @@ export const CharacterNode = memo(({ data }: NodeProps) => {
           ))}
         </div>
       </div>
-      <Handle type="source" position={Position.Right} className="!bg-pink-500 !w-2.5 !h-2.5" />
-      <Handle type="target" position={Position.Left} className="!bg-pink-500 !w-2.5 !h-2.5" />
     </div>
   );
 });

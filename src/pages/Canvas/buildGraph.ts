@@ -1,8 +1,24 @@
-import type { Node, Edge } from '@xyflow/react';
-import { MarkerType } from '@xyflow/react';
 import type { ScriptDTO, ShotDTO } from '@/lib/api/scripts';
 import type { AssetDTO } from '@/lib/api/assets';
 import { loadCanvasPositions } from './persistence';
+
+export interface CanvasNode {
+  id: string;
+  type?: string;
+  position: { x: number; y: number };
+  data?: Record<string, unknown>;
+}
+
+export interface CanvasEdge {
+  id: string;
+  source: string;
+  target: string;
+  sourceHandle?: string;
+  targetHandle?: string;
+  animated?: boolean;
+  style?: Record<string, string | number>;
+  markerEnd?: { type: string };
+}
 
 function parseScenes(content: string): { title: string; content: string }[] {
   const lines = content.split('\n');
@@ -50,9 +66,9 @@ export function buildCanvasGraph(
   onRunAi?: () => void,
   projectId?: string | null,
   candidateNodes?: CandidateNode[],
-): { nodes: Node[]; edges: Edge[] } {
-  const nodes: Node[] = [];
-  const edges: Edge[] = [];
+): { nodes: CanvasNode[]; edges: CanvasEdge[] } {
+  const nodes: CanvasNode[] = [];
+  const edges: CanvasEdge[] = [];
 
   const scenes = script ? parseScenes(script.content) : [];
   const shotList = shots ?? [];
@@ -66,7 +82,11 @@ export function buildCanvasGraph(
       id,
       type: 'script',
       position: savedPositions?.get(id) ?? { x: 0, y: i * 200 },
-      data: { sceneNumber: i + 1, title: scene.title, content: scene.content.slice(0, 120) },
+      data: {
+        sceneNumber: i + 1,
+        title: `Script ${String(i + 1).padStart(2, '0')} · ${scene.title}`,
+        content: scene.content.slice(0, 120),
+      },
     });
   });
 
@@ -79,6 +99,7 @@ export function buildCanvasGraph(
       type: 'ai',
       position: savedPositions?.get('ai-gen') ?? { x: 380, y: aiY },
       data: {
+        title: 'Agent Core · Storyboard Director',
         label: 'AI 分镜生成',
         type: 'generate',
         status: aiStatus,
@@ -96,6 +117,7 @@ export function buildCanvasGraph(
       type: 'character',
       position: savedPositions?.get(id) ?? { x: 350 + (i % 2) * 180, y: -160 + Math.floor(i / 2) * 200 },
       data: {
+        title: `Character · ${char.name}`,
         name: char.name,
         description: char.description || '',
         avatar: char.thumbnail_url || char.avatar,
@@ -119,7 +141,7 @@ export function buildCanvasGraph(
       position: savedPositions?.get(id) ?? { x: 650, y: i * 230 },
       data: {
         shotNumber: i + 1,
-        title: shot.title || `镜头 ${i + 1}`,
+        title: `Shot ${String(i + 1).padStart(2, '0')} · ${shot.title || `镜头 ${i + 1}`}`,
         dialog: shot.dialog || '',
         style: (shot.metadata?.style as string) || '日系动漫',
         imageUrl: shot.image_url,
@@ -130,7 +152,7 @@ export function buildCanvasGraph(
       source: 'ai-gen',
       target: `shot-${shot.id}`,
       style: { stroke: '#f59e0b' },
-      markerEnd: { type: MarkerType.ArrowClosed },
+      markerEnd: { type: 'arrowclosed' },
     });
   });
 
@@ -153,7 +175,11 @@ export function buildCanvasGraph(
       id: 'video-out',
       type: 'video',
       position: savedPositions?.get('video-out') ?? { x: 950, y: videoY },
-      data: { title: projectName || '视频输出', duration: formatDuration(totalMs), status: 'waiting' },
+      data: {
+        title: `Video Master · ${projectName || '视频输出'}`,
+        duration: formatDuration(totalMs),
+        status: 'waiting',
+      },
     });
     shotList.forEach((shot) => {
       edges.push({

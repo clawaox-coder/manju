@@ -1,4 +1,4 @@
-import type { Transition } from 'framer-motion';
+import type { TargetAndTransition, Transition } from 'framer-motion';
 
 const STAGGER_S = 0.12;
 const ENTER_DURATION_S = 0.28;
@@ -11,7 +11,7 @@ export function staggerIndexFromId(id: string): number {
   return m ? parseInt(m[1], 10) : 0;
 }
 
-interface Pose {
+interface Pose extends TargetAndTransition {
   opacity: number;
   scale: number;
   y: number;

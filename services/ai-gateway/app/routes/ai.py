@@ -261,9 +261,92 @@ async def list_tasks(
     return {"data": [task_to_dto(t) for t in items], "meta": {"count": len(items)}}
 
 
-# ---- 8. POST /v1/ai/tts ----
+# ---- 8. POST /v1/ai/chat (对话 agent) ----
 
-class TTSRequest(BaseModel):
+class ChatTurn(BaseModel):
+    role: str = Field(pattern="^(user|assistant)$")
+    content: str
+
+
+class ChatContext(BaseModel):
+    has_script: bool = False
+    has_shots: bool = False
+    idea: dict[str, Any] = Field(default_factory=dict)
+
+
+class ChatRequest(BaseModel):
+    project_id: str | None = None
+    stage: str = "idea"
+    messages: list[ChatTurn] = Field(min_length=1)
+    context: ChatContext = ChatContext()
+
+
+@router.post("/chat")
+async def chat(
+    body: ChatRequest,
+    auth: AuthContext = Depends(require_auth),
+):
+    _require_write(auth)
+    result = await ai_svc.chat_respond(
+        team_id=auth.team_id,
+        user_id=auth.user_id,
+        project_id=body.project_id,
+        stage=body.stage,
+        messages=[t.model_dump() for t in body.messages],
+        context=body.context.model_dump(),
+    )
+    return result
+
+
+# ---- 8b. POST /v1/ai/intent/classify (后续阶段自由输入意图分类) ----
+
+class IntentClassifyRequest(BaseModel):
+    message: str = Field(min_length=1)
+    stage: str
+    step: str = ""
+    context: str = ""
+
+
+@router.post("/intent/classify")
+async def intent_classify(
+    body: IntentClassifyRequest,
+    auth: AuthContext = Depends(require_auth),
+):
+    _require_write(auth)
+    result = await ai_svc.intent_classify(
+        team_id=auth.team_id,
+        user_id=auth.user_id,
+        message=body.message,
+        stage=body.stage,
+        step=body.step,
+        context=body.context,
+    )
+    return result
+
+
+# ---- 8c. POST /v1/ai/title (对话/项目标题生成) ----
+
+class TitleRequest(BaseModel):
+    message: str = Field(min_length=1, description="用户的第一句话/灵感")
+    project_id: str | None = None
+
+
+@router.post("/title")
+async def title(
+    body: TitleRequest,
+    auth: AuthContext = Depends(require_auth),
+):
+    _require_write(auth)
+    result = await ai_svc.generate_title(
+        team_id=auth.team_id,
+        user_id=auth.user_id,
+        project_id=body.project_id,
+        message=body.message,
+    )
+    return result
+
+
+# ---- 9. POST /v1/ai/tts ----
     text: str = Field(min_length=1, max_length=4096)
     voice: str = Field(min_length=1)
     speed: float = Field(default=1.0, ge=0.25, le=4.0)

@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { ConfirmProvider } from '@/hooks/useConfirm';
 import { useTheme } from '@/hooks/useTheme';
+import { GlobalThemeToggle } from '@/components/layout/GlobalThemeToggle';
 import { AppRouter } from './router';
 import { ErrorBoundary } from './ErrorBoundary';
 
@@ -23,6 +24,7 @@ export function App() {
         <TooltipProvider delayDuration={200}>
           <ConfirmProvider>
             <AppRouter />
+            <GlobalThemeToggle />
             <Toaster
               position="top-right"
               toastOptions={{

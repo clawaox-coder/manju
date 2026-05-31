@@ -133,7 +133,7 @@ export default function ApiKeys() {
         <div className="space-y-3">
           <div>
             <div className="text-xs text-muted-foreground mb-1.5">cURL · 创建视频任务</div>
-            <pre className="bg-gray-900 text-gray-100 rounded-lg p-3 text-xs overflow-x-auto">
+            <pre className="bg-secondary text-secondary-foreground border border-border rounded-lg p-3 text-xs overflow-x-auto">
               <code>{`curl -X POST https://api.manju-ai.studio/v1/videos \\
   -H "Authorization: Bearer YOUR_API_KEY" \\
   -H "Content-Type: application/json" \\
@@ -141,13 +141,13 @@ export default function ApiKeys() {
             </pre>
           </div>
           <div className="flex gap-3 text-xs">
-            <button onClick={() => toast.info('正在打开 API 文档...')} className="text-brand-600 hover:underline">
+            <button onClick={() => toast.info('正在打开 API 文档...')} className="text-primary hover:underline">
               完整 API 文档 →
             </button>
-            <button onClick={() => toast.info('SDK 列表已打开')} className="text-brand-600 hover:underline">
+            <button onClick={() => toast.info('SDK 列表已打开')} className="text-primary hover:underline">
               SDK 下载 →
             </button>
-            <button onClick={() => toast.info('Webhook 配置已打开')} className="text-brand-600 hover:underline">
+            <button onClick={() => toast.info('Webhook 配置已打开')} className="text-primary hover:underline">
               Webhook 配置 →
             </button>
           </div>

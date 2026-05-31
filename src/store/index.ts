@@ -34,7 +34,7 @@ export interface AppState {
   projectId: string | null;
   projectName: string;
   shots: Shot[];
-  currentShotId: number;
+  currentShotId: Shot['id'];
   characters: Character[];
   music: MusicTrack[];
   sfx: SfxClip[];
@@ -69,7 +69,7 @@ export interface AppState {
   // Actions
   setProjectId: (id: string | null) => void;
   setProjectName: (name: string) => void;
-  setCurrentShot: (id: number) => void;
+  setCurrentShot: (id: Shot['id']) => void;
   setIsPlaying: (playing: boolean) => void;
   setCurrentTime: (time: number) => void;
   setTheme: (theme: Theme) => void;
@@ -149,12 +149,7 @@ export const useStore = create<AppState>()(
       setCurrentShot: (id) => set({ currentShotId: id }),
       setIsPlaying: (playing) => set({ isPlaying: playing }),
       setCurrentTime: (time) => set({ currentTime: time }),
-      setTheme: (theme) => {
-        set({ theme });
-        const root = document.documentElement;
-        const effective = theme === 'auto' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : theme;
-        root.classList.toggle('dark', effective === 'dark');
-      },
+      setTheme: (theme) => set({ theme }),
       setDensity: (density) => set({ density }),
       setFontSize: (size) => set({ fontSize: size }),
       toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),

@@ -35,8 +35,8 @@ export default function PlaceholderPage() {
         <p className="text-xs text-muted-foreground mt-1">即将上线</p>
       </div>
       <div className="bg-card rounded-2xl p-16 flex flex-col items-center justify-center text-center border border-border">
-        <div className="w-16 h-16 rounded-2xl gradient-purple-soft flex items-center justify-center mb-4">
-          <Wrench className="w-8 h-8 text-brand-600" />
+        <div className="w-16 h-16 rounded-2xl gradient-brand-soft flex items-center justify-center mb-4">
+          <Wrench className="w-8 h-8 text-primary" />
         </div>
         <h2 className="font-semibold text-base mb-2">{name} · 开发中</h2>
         <p className="text-xs text-muted-foreground max-w-sm">该页面正在精细打磨, 将在后续 Phase 中逐步完成。</p>

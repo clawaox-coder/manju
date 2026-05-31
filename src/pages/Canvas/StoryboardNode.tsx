@@ -1,7 +1,12 @@
 import { memo } from 'react';
 import { motion } from 'framer-motion';
-import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { nodeMotionProps } from './canvas/nodeMotion';
+
+interface NodeProps {
+  id: string;
+  data: unknown;
+  selected?: boolean;
+}
 
 export interface StoryboardNodeData {
   shotNumber: number;
@@ -9,7 +14,7 @@ export interface StoryboardNodeData {
   dialog: string;
   style: string;
   imageUrl?: string;
-  nodeStatus?: 'candidate' | 'selected' | 'active' | 'settled';
+  nodeStatus?: 'candidate' | 'selected' | 'active' | 'settled' | 'leaving';
 }
 
 const STATUS_STYLES: Record<string, string> = {
@@ -31,7 +36,6 @@ export const StoryboardNode = memo(({ id, data, selected }: NodeProps) => {
       {...nodeMotionProps(nodeStatus, id)}
       className={`bg-card border rounded-xl shadow-md w-[180px] overflow-hidden transition-colors duration-300 ${baseSelected} ${statusClass} group`}
     >
-      <Handle type="target" position={Position.Left} className="!bg-blue-500 !w-2 !h-2" />
       <div className="aspect-[4/3] bg-gradient-to-br from-slate-800 to-slate-900 relative">
         {imageUrl ? (
           <img src={imageUrl} alt={title} className="w-full h-full object-cover" />
@@ -60,8 +64,6 @@ export const StoryboardNode = memo(({ id, data, selected }: NodeProps) => {
         <div className="text-[11px] font-medium truncate">{title}</div>
         <div className="text-[10px] text-muted-foreground truncate">{dialog || '无对白'}</div>
       </div>
-      <Handle type="source" position={Position.Right} className="!bg-blue-500 !w-2 !h-2" />
-      <Handle type="source" position={Position.Bottom} id="video" className="!bg-green-500 !w-2 !h-2" />
     </motion.div>
   );
 });

@@ -1,10 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
-import { renderWithProviders, screen, fireEvent } from './utils';
+import { renderWithProviders, screen, fireEvent, waitFor } from './utils';
 import Auth from '@/pages/Auth';
 
 vi.mock('@/lib/api/auth', () => ({
   login: vi.fn().mockResolvedValue({ user: { id: '1', name: 'Test' }, team: { id: 't1', name: 'Team' }, accessToken: 'tok', refreshToken: 'ref', expiresIn: 3600 }),
   register: vi.fn().mockResolvedValue({ user: { id: '1', name: 'Test' }, team: { id: 't1', name: 'Team' }, accessToken: 'tok', refreshToken: 'ref', expiresIn: 3600 }),
+  forgotPassword: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('react-router-dom', async () => {
@@ -25,10 +26,10 @@ describe('Auth page', () => {
     expect(screen.getByRole('button', { name: '登录' })).toBeInTheDocument();
   });
 
-  it('switches to register mode and shows name field', () => {
+  it('switches to register mode and shows name field', async () => {
     renderWithProviders(<Auth />);
     fireEvent.click(screen.getByText('注册'));
-    expect(screen.getByPlaceholderText('你的名字')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByPlaceholderText('你的名字')).toBeInTheDocument());
     expect(screen.getByRole('button', { name: '注册' })).toBeInTheDocument();
   });
 });

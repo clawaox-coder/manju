@@ -73,10 +73,8 @@ export default function Billing() {
       <motion.div
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
-        className="rounded-2xl p-6 mb-4 text-white relative overflow-hidden"
-        style={{ background: 'linear-gradient(135deg, #7c3aed 0%, #ec4899 100%)' }}
+        className="rounded-lg p-6 mb-4 text-primary-foreground relative overflow-hidden bg-foreground"
       >
-        <div className="absolute top-0 right-0 w-64 h-64 rounded-full bg-white/10 -mr-32 -mt-32" />
         <div className="relative">
           <div className="text-xs opacity-80 mb-1">当前套餐</div>
           <div className="flex items-end gap-3 mb-2">
@@ -87,11 +85,11 @@ export default function Billing() {
           </div>
           <div className="text-xs opacity-80 mb-4">当前周期 {autoRenew && '· 自动续费已开启'}</div>
           <div className="flex gap-2">
-            <Button className="bg-white text-brand-700 hover:bg-white/90 shadow-none" onClick={() => document.getElementById('plansGrid')?.scrollIntoView({ behavior: 'smooth' })}>
+            <Button className="bg-background text-foreground hover:bg-background/90 shadow-none" onClick={() => document.getElementById('plansGrid')?.scrollIntoView({ behavior: 'smooth' })}>
               升级套餐
             </Button>
             <Button
-              className="bg-white/20 backdrop-blur hover:bg-white/30 shadow-none"
+              className="bg-primary-foreground/10 text-primary-foreground hover:bg-primary-foreground/20 shadow-none"
               onClick={() => {
                 setAutoRenew((v) => !v);
                 toast.success(`自动续费已${!autoRenew ? '开启' : '关闭'}`);
@@ -137,11 +135,11 @@ export default function Billing() {
                 key={p.key}
                 className={cn(
                   'relative p-5 rounded-xl border-2',
-                  isCurrent ? 'border-brand-500 bg-brand-50/30' : p.popular ? 'border-pink-300 ring-4 ring-pink-100 dark:ring-pink-950/30' : 'border-border'
+                  isCurrent ? 'border-foreground bg-accent' : p.popular ? 'border-pink-300 ring-4 ring-pink-100 dark:ring-pink-950/30' : 'border-border'
                 )}
               >
                 {p.popular && <Badge className="absolute -top-3 left-1/2 -translate-x-1/2 bg-pink-500 text-white">热门</Badge>}
-                {isCurrent && <Badge className="absolute top-2 right-2 bg-brand-500 text-white">当前</Badge>}
+                {isCurrent && <Badge className="absolute top-2 right-2 bg-primary text-primary-foreground">当前</Badge>}
                 <div className="text-base font-bold mb-1">{p.name}</div>
                 <div className="text-2xl font-bold mb-1">{p.price}</div>
                 <div className="text-xs text-muted-foreground mb-4">{p.period}</div>
@@ -176,7 +174,7 @@ export default function Billing() {
       <Card className="overflow-hidden">
         <div className="px-5 py-4 border-b border-border flex items-center justify-between">
           <h2 className="font-semibold">账单历史</h2>
-          <button onClick={() => toast.success('已导出全部账单')} className="text-xs text-brand-600 hover:underline">
+          <button onClick={() => toast.success('已导出全部账单')} className="text-xs text-primary hover:underline">
             导出全部
           </button>
         </div>

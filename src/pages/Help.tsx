@@ -7,12 +7,12 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
 const CARDS = [
-  { title: '新手教程', desc: '10 分钟做出你的第一部 AI 短剧', Icon: GraduationCap, color: 'from-purple-400 to-pink-400' },
-  { title: '视频教程', desc: '24 集深度教学课程', Icon: Video, color: 'from-blue-400 to-cyan-400' },
-  { title: '社区论坛', desc: '5 万创作者一起交流', Icon: MessageCircle, color: 'from-green-400 to-teal-400' },
-  { title: 'API 文档', desc: '开发者集成指南', Icon: BookOpen, color: 'from-orange-400 to-red-400' },
-  { title: '反馈建议', desc: '告诉我们如何改进', Icon: Lightbulb, color: 'from-yellow-400 to-orange-400' },
-  { title: '联系客服', desc: '7×24 小时在线支持', Icon: Headphones, color: 'from-indigo-400 to-purple-400' }
+  { title: '新手教程', desc: '10 分钟做出你的第一部 AI 短剧', Icon: GraduationCap, color: 'bg-muted' },
+  { title: '视频教程', desc: '24 集深度教学课程', Icon: Video, color: 'bg-muted' },
+  { title: '社区论坛', desc: '5 万创作者一起交流', Icon: MessageCircle, color: 'bg-muted' },
+  { title: 'API 文档', desc: '开发者集成指南', Icon: BookOpen, color: 'bg-muted' },
+  { title: '反馈建议', desc: '告诉我们如何改进', Icon: Lightbulb, color: 'bg-muted' },
+  { title: '联系客服', desc: '7×24 小时在线支持', Icon: Headphones, color: 'bg-muted' }
 ];
 
 const FAQS: [string, string][] = [
@@ -45,12 +45,12 @@ export default function Help() {
                 } else toast.info(`${c.title} 已打开`);
               }}
             >
-              <div className={cn('w-12 h-12 rounded-xl bg-gradient-to-br flex items-center justify-center mb-3', c.color)}>
+              <div className={cn('w-12 h-12 rounded-xl flex items-center justify-center mb-3', c.color)}>
                 <c.Icon className="w-6 h-6 text-white" />
               </div>
               <div className="font-semibold mb-1">{c.title}</div>
               <div className="text-xs text-muted-foreground">{c.desc}</div>
-              <div className="text-xs text-brand-600 mt-3 opacity-0 group-hover:opacity-100 transition">前往 →</div>
+              <div className="text-xs text-primary mt-3 opacity-0 group-hover:opacity-100 transition">前往 →</div>
             </Card>
           </motion.div>
         ))}

@@ -1,44 +1,48 @@
 import { useState, useRef, useEffect } from 'react';
+import { ArrowUp, Paperclip, Sparkles, Pencil } from 'lucide-react';
 import type { ChatMessage } from '../agent/types';
 import { MessageThinking } from './MessageThinking';
-import { MessageCardGroup } from './MessageCardGroup';
 import { MessageProgress } from './MessageProgress';
 import { MessageAction } from './MessageAction';
-import { OptionPill } from './OptionPill';
+import { cn } from '@/lib/utils';
 
 interface ChatPanelProps {
   messages: ChatMessage[];
   onSendMessage: (text: string) => void;
   onSelectOption: (value: string) => void;
-  onSelectCard: (cardId: string) => void;
   onAction: (action: string) => void;
   loading: boolean;
-  contextIndicator: string | null;
-  onExitContext: () => void;
+  stage: string;
+  suggestedPrompts: string[];
+  title: string;
+  onTitleChange: (title: string) => void;
 }
 
 export function ChatPanel({
-  messages, onSendMessage, onSelectOption, onSelectCard, onAction, loading, contextIndicator, onExitContext,
+  messages, onSendMessage, onSelectOption, onAction, loading,
+  stage, suggestedPrompts, title, onTitleChange,
 }: ChatPanelProps) {
   const [input, setInput] = useState('');
   const [collapsedThinking, setCollapsedThinking] = useState<Set<string>>(new Set());
-  const [online, setOnline] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // 标题内联编辑：editingTitle 非 null 时进入编辑态。
+  const [editingTitle, setEditingTitle] = useState<string | null>(null);
+  const titleInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (editingTitle !== null) titleInputRef.current?.select();
+  }, [editingTitle]);
+
+  const commitTitle = () => {
+    if (editingTitle === null) return;
+    const next = editingTitle.trim();
+    if (next && next !== title) onTitleChange(next);
+    setEditingTitle(null);
+  };
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages]);
-
-  useEffect(() => {
-    const update = () => setOnline(navigator.onLine);
-    update();
-    window.addEventListener('online', update);
-    window.addEventListener('offline', update);
-    return () => {
-      window.removeEventListener('online', update);
-      window.removeEventListener('offline', update);
-    };
-  }, []);
 
   const handleSend = () => {
     if (!input.trim()) return;
@@ -46,88 +50,165 @@ export function ChatPanel({
     setInput('');
   };
 
-  return (
-    <div className="w-[340px] border-l border-border flex flex-col bg-card/50 backdrop-blur">
-      {!online && (
-        <div className="px-4 py-2 bg-amber-500/10 border-b border-amber-500/30 text-center">
-          <span className="text-xs text-amber-700 dark:text-amber-400">网络已断开，恢复后将自动重连</span>
-        </div>
-      )}
-      {contextIndicator && (
-        <div className="px-4 py-2 bg-primary/5 border-b border-primary/20 flex items-center justify-between">
-          <span className="text-xs text-primary">{contextIndicator}</span>
-          <button className="text-[10px] text-muted-foreground hover:text-foreground" onClick={onExitContext}>
-            返回主线
-          </button>
-        </div>
-      )}
+  // Only the latest AI message shows its quick-reply options (avoid stale pills).
+  const lastAiId = [...messages].reverse().find((m) => m.role === 'ai')?.id;
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
-        {messages.map((msg) => (
-          <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-            <div className={`max-w-[85%] ${msg.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted'} rounded-2xl px-3.5 py-2.5`}>
-              {msg.thinking && (
-                <MessageThinking
-                  text={msg.thinking}
-                  collapsed={collapsedThinking.has(msg.id)}
-                  onToggle={() => setCollapsedThinking((s) => {
-                    const n = new Set(s);
-                    if (n.has(msg.id)) n.delete(msg.id); else n.add(msg.id);
-                    return n;
-                  })}
-                />
-              )}
-              <p className="text-[13px] leading-relaxed whitespace-pre-wrap">{msg.text}</p>
-              {msg.type === 'options' && msg.options && (
-                <div className="flex flex-wrap gap-1.5 mt-2.5">
-                  {msg.options.map((opt) => (
-                    <OptionPill key={opt.value} label={opt.label} value={opt.value} onClick={onSelectOption} />
+  // Greeting-only / empty → render a centered hero instead of a top-anchored bubble.
+  const single = messages.length === 1 ? messages[0] : null;
+  const showHero =
+    messages.length === 0 ||
+    (!!single && single.role === 'ai' && single.type === 'text' && !single.options?.length);
+  const heroText = single?.text
+    ?? '嗨，我是你的创作搭档。想做个什么样的短片？一句灵感、一个画面，随便聊聊都行。';
+
+  return (
+    <div className="w-[420px] max-w-[45vw] flex flex-col h-full border-r border-border bg-background/95 backdrop-blur-xl">
+      {/* 顶栏：头像 + 可编辑项目名（左），当前状态（右） */}
+      <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-border">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="w-7 h-7 rounded-xl gradient-brand flex items-center justify-center shrink-0">
+            <Sparkles className="w-4 h-4 text-white" />
+          </div>
+          {editingTitle !== null ? (
+            <input
+              ref={titleInputRef}
+              className="min-w-0 flex-1 bg-transparent text-sm font-medium outline-none border-b border-primary/50 pb-0.5"
+              value={editingTitle}
+              maxLength={16}
+              onChange={(e) => setEditingTitle(e.target.value)}
+              onBlur={commitTitle}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); commitTitle(); }
+                else if (e.key === 'Escape') { e.preventDefault(); setEditingTitle(null); }
+              }}
+            />
+          ) : (
+            <button
+              type="button"
+              onClick={() => setEditingTitle(title)}
+              title="点击修改标题"
+              className="group flex items-center gap-1.5 min-w-0 text-left"
+            >
+              <span className="text-sm font-medium truncate">
+                {title || '未命名项目'}
+              </span>
+              <Pencil className="w-3 h-3 text-muted-foreground/0 group-hover:text-muted-foreground/60 shrink-0 transition" />
+            </button>
+          )}
+        </div>
+        <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground shrink-0">
+          <span className="w-1.5 h-1.5 rounded-full bg-primary/60" />
+          {stage}
+        </span>
+      </div>
+
+      {showHero ? (
+        <div className="flex-1 overflow-y-auto flex flex-col items-center justify-center px-6 text-center">
+          <div className="w-14 h-14 rounded-2xl gradient-brand flex items-center justify-center shadow-lg shadow-primary/20 mb-5">
+            <Sparkles className="w-7 h-7 text-white" />
+          </div>
+          <p className="text-[15px] leading-relaxed text-foreground/90 max-w-[320px] mb-6 whitespace-pre-wrap">
+            {heroText}
+          </p>
+          {suggestedPrompts.length > 0 && (
+            <div className="w-full max-w-[340px] space-y-2">
+              {suggestedPrompts.map((prompt) => (
+                <button
+                  key={prompt}
+                  type="button"
+                  className="group w-full flex items-center gap-2.5 rounded-xl border border-border bg-card px-3.5 py-3 text-left text-[13px] text-foreground/80 hover:border-primary/40 hover:bg-primary/5 hover:text-foreground transition"
+                  onClick={() => onSendMessage(prompt)}
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-primary/60 group-hover:text-primary shrink-0" />
+                  <span className="flex-1">{prompt}</span>
+                  <ArrowUp className="w-3.5 h-3.5 text-muted-foreground/40 rotate-45 group-hover:text-primary transition" />
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (
+        <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
+          {messages.map((m) => (
+            <div key={m.id}>
+              <div className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                <div className={cn(
+                  'max-w-[85%] rounded-2xl px-3.5 py-2.5',
+                  m.role === 'user' ? 'bg-primary text-primary-foreground'
+                    : m.role === 'system' ? 'bg-transparent text-muted-foreground text-[11px] italic'
+                    : 'bg-muted/60'
+                )}>
+                  {m.thinking && (
+                    <MessageThinking
+                      text={m.thinking}
+                      collapsed={collapsedThinking.has(m.id)}
+                      onToggle={() => setCollapsedThinking((s) => {
+                        const n = new Set(s);
+                        if (n.has(m.id)) n.delete(m.id); else n.add(m.id);
+                        return n;
+                      })}
+                    />
+                  )}
+                  {m.text && <p className="text-[13px] leading-relaxed whitespace-pre-wrap">{m.text}</p>}
+                  {m.type === 'progress' && m.progress && (
+                    <div className="mt-2"><MessageProgress current={m.progress.current} total={m.progress.total} label={m.progress.label} /></div>
+                  )}
+                  {m.type === 'action' && m.action && (
+                    <div className="mt-2"><MessageAction label={m.action.label} description={m.action.description} icon={m.action.icon} onClick={() => onAction(m.action!.label)} /></div>
+                  )}
+                </div>
+              </div>
+              {/* Agent-generated quick replies — only on the most recent AI turn */}
+              {m.role === 'ai' && m.id === lastAiId && m.options && m.options.length > 0 && !loading && (
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {m.options.map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      className="rounded-full border border-primary/30 bg-primary/5 px-3 py-1.5 text-[12px] text-foreground hover:bg-primary/10 hover:border-primary/50 transition"
+                      onClick={() => onSelectOption(opt.value)}
+                    >
+                      {opt.label}
+                    </button>
                   ))}
                 </div>
               )}
-              {msg.type === 'card-group' && msg.cards && (
-                <div className="mt-2.5">
-                  <MessageCardGroup cards={msg.cards} onSelect={onSelectCard} selectedId={msg.selectedCard} />
-                </div>
-              )}
-              {msg.type === 'progress' && msg.progress && (
-                <div className="mt-2">
-                  <MessageProgress current={msg.progress.current} total={msg.progress.total} label={msg.progress.label} />
-                </div>
-              )}
-              {msg.type === 'action' && msg.action && (
-                <div className="mt-2.5">
-                  <MessageAction label={msg.action.label} description={msg.action.description} icon={msg.action.icon} onClick={() => onAction(msg.action!.label)} />
-                </div>
-              )}
             </div>
-          </div>
-        ))}
-        {loading && (
-          <div className="flex justify-start">
-            <div className="bg-muted rounded-2xl px-3.5 py-2.5">
-              <div className="flex gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/50 animate-bounce" />
-                <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/50 animate-bounce [animation-delay:0.1s]" />
-                <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/50 animate-bounce [animation-delay:0.2s]" />
+          ))}
+          {loading && (
+            <div className="flex justify-start">
+              <div className="bg-muted/60 rounded-2xl px-3.5 py-2.5">
+                <div className="flex gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/50 animate-bounce" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/50 animate-bounce [animation-delay:0.1s]" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/50 animate-bounce [animation-delay:0.2s]" />
+                </div>
               </div>
             </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
 
-      <div className="px-3 py-3 border-t border-border">
-        <div className="flex items-center gap-2 bg-muted rounded-xl px-3 py-2">
+      <div className="px-4 py-3 border-t border-border">
+        <div className="flex items-center gap-2 rounded-2xl border border-border bg-card px-3 py-2.5 focus-within:border-primary/40 transition">
+          <button type="button" className="text-muted-foreground hover:text-foreground transition">
+            <Paperclip className="w-4 h-4" />
+          </button>
           <input
             className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
-            placeholder={online ? '说点什么...' : '网络已断开...'}
+            placeholder="描述你的创作想法..."
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-            disabled={loading || !online}
+            disabled={loading}
           />
-          <button className="text-xs text-primary font-medium disabled:opacity-40" onClick={handleSend} disabled={!input.trim() || loading || !online}>
-            发送
+          <button
+            type="button"
+            className="w-7 h-7 rounded-full bg-primary flex items-center justify-center text-primary-foreground disabled:opacity-40 transition"
+            onClick={handleSend}
+            disabled={!input.trim() || loading}
+          >
+            <ArrowUp className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>

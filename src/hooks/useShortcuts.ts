@@ -77,6 +77,6 @@ export function useGlobalShortcuts(opts: { onSearch: () => void; onNewProject: (
     { key: 's', ctrl: true, description: '保存', group: '全局', handler: () => toast.success('已保存') },
     { key: '?', description: '快捷键面板', group: '全局', handler: opts.onShortcutsOverlay },
     { key: '/', shift: true, description: '快捷键面板', group: '全局', handler: opts.onShortcutsOverlay },
-    { key: 'h', ctrl: true, description: '回到工作台', group: '全局', handler: () => navigate('/') }
+    { key: 'h', ctrl: true, description: '回到工作台', group: '全局', handler: () => navigate('/home') }
   ]);
 }
