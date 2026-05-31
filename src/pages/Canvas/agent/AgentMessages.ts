@@ -13,42 +13,6 @@ function makeMsg(partial: Omit<ChatMessage, 'id' | 'role' | 'timestamp'> & { rol
   return { id: `msg-${++msgCounter}`, role: 'ai', timestamp: Date.now(), ...partial };
 }
 
-const TYPE_OPTIONS = [
-  { label: '🎭 漫剧', value: '漫剧' },
-  { label: '🎬 真人短剧', value: '真人短剧' },
-  { label: '✨ 动画短片', value: '动画短片' },
-];
-
-const STYLE_MAP: Record<string, { label: string; value: string }[]> = {
-  漫剧: [
-    { label: '🌸 日系动漫', value: '日系动漫' },
-    { label: '🦸 美漫风', value: '美漫' },
-    { label: '🖌 水墨国风', value: '水墨国风' },
-  ],
-  真人短剧: [
-    { label: '🎥 电影质感', value: '电影质感' },
-    { label: '📱 竖屏短剧', value: '竖屏短剧' },
-    { label: '🎞 复古胶片', value: '复古胶片' },
-  ],
-  动画短片: [
-    { label: '🧊 3D 渲染', value: '3D渲染' },
-    { label: '✏️ 手绘', value: '手绘' },
-    { label: '🟨 像素', value: '像素' },
-  ],
-};
-
-const DURATION_OPTIONS = [
-  { label: '⚡ 30 秒', value: '30秒' },
-  { label: '🎬 1 分钟', value: '1分钟' },
-  { label: '📖 2-3 分钟', value: '2分钟' },
-];
-
-const AUDIENCE_OPTIONS = [
-  { label: '🧑‍💻 年轻人 (18-30)', value: '年轻人' },
-  { label: '👨‍👩‍👧 全年龄', value: '全年龄' },
-  { label: '👔 职场人', value: '职场人' },
-];
-
 export function getAgentMessage(state: AgentState, ctx?: MessageContext): ChatMessage {
   if (state.step === 'editing' && state.focusedNodeId) {
     const label = ctx?.focusedNodeLabel ?? state.focusedNodeId;
@@ -105,17 +69,17 @@ function getVideoMessage(state: AgentState): ChatMessage {
 function getIdeaMessage(state: AgentState): ChatMessage {
   switch (state.step) {
     case 'greeting':
-      return makeMsg({ type: 'text', text: '你好！我是你的创作助手 🎬 想做什么类型的作品？' });
+      return makeMsg({ type: 'text', text: '嗨，我是你的创作搭档。想做个什么样的短片？随便聊聊就行——一句话的灵感、一个画面、或者一个还没想清楚的念头都可以。' });
     case 'ask_type':
-      return makeMsg({ type: 'options', text: '想做什么类型？', options: TYPE_OPTIONS });
+      return makeMsg({ type: 'text', text: '想做成哪种形式？比如二次元漫剧、真人短剧、还是动画短片。直接说你脑子里的画面就好。' });
     case 'ask_style':
-      return makeMsg({ type: 'options', text: '选个风格方向：', options: STYLE_MAP[state.ideaContext.type ?? '漫剧'] ?? STYLE_MAP['漫剧'] });
+      return makeMsg({ type: 'text', text: '风格上有什么偏好吗？像日系动漫、美漫、水墨国风、电影质感这些方向，或者你心里已经有的感觉。' });
     case 'ask_duration':
-      return makeMsg({ type: 'options', text: '视频时长大概多久？', options: DURATION_OPTIONS });
+      return makeMsg({ type: 'text', text: '大概想做多长？30 秒的快节奏、1 分钟的小故事，还是 2-3 分钟铺得开一点。' });
     case 'ask_audience':
-      return makeMsg({ type: 'options', text: '目标受众是？', options: AUDIENCE_OPTIONS });
+      return makeMsg({ type: 'text', text: '主要想给谁看？年轻人、全年龄、还是某个特定人群。说完这些我就能开始帮你搭故事了。' });
     default:
-      return makeMsg({ type: 'text', text: '让我们开始吧！' });
+      return makeMsg({ type: 'text', text: '好，我们开始吧。' });
   }
 }
 

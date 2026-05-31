@@ -58,6 +58,23 @@ export class AgentStateMachine {
     }
   }
 
+  /** Agent-driven idea stage: merge LLM-extracted settings into ideaContext. */
+  mergeIdeaContext(extracted: Partial<IdeaContext>): void {
+    const clean = Object.fromEntries(
+      Object.entries(extracted).filter(([, v]) => typeof v === 'string' && v.trim()),
+    ) as Partial<IdeaContext>;
+    if (Object.keys(clean).length === 0) return;
+    this.state = { ...this.state, ideaContext: { ...this.state.ideaContext, ...clean } };
+  }
+
+  /** Agent-driven idea stage: jump straight to script generation when the
+   *  conversation agent decides enough is collected (trigger: generate_script). */
+  beginScriptGen(): void {
+    if (this.state.stage === 'idea') {
+      this.state = { ...this.state, stage: 'script', step: 'generate' };
+    }
+  }
+
   selectCard(cardId: string): void {
     this.selectOption(cardId);
   }

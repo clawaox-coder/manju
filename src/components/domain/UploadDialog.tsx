@@ -106,7 +106,7 @@ export function UploadDialog({ open, onOpenChange, assetType, accept, title }: P
             onClick={() => inputRef.current?.click()}
             className={cn(
               'border-2 border-dashed rounded-xl p-10 text-center cursor-pointer transition',
-              dragOver ? 'border-brand-500 bg-brand-50/30' : 'border-border hover:border-brand-300'
+              dragOver ? 'border-foreground bg-accent' : 'border-border hover:border-foreground/30'
             )}
           >
             <Upload className="w-10 h-10 mx-auto mb-3 text-muted-foreground" />

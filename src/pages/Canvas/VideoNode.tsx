@@ -1,5 +1,8 @@
 import { memo } from 'react';
-import { Handle, Position, type NodeProps } from '@xyflow/react';
+
+interface NodeProps {
+  data: unknown;
+}
 
 export interface VideoNodeData {
   title: string;
@@ -18,8 +21,6 @@ export const VideoNode = memo(({ data }: NodeProps) => {
   const st = STATUS_MAP[status];
   return (
     <div className="bg-card border-2 border-green-400/40 rounded-xl shadow-lg w-[200px] overflow-hidden">
-      <Handle type="target" position={Position.Left} className="!bg-green-500 !w-2.5 !h-2.5" />
-      <Handle type="target" position={Position.Top} id="shots" className="!bg-blue-500 !w-2.5 !h-2.5" />
       <div className="bg-gradient-to-r from-green-500/10 to-emerald-500/10 px-3 py-2 border-b border-border">
         <div className="text-xs font-medium">🎬 {title}</div>
       </div>
@@ -31,7 +32,6 @@ export const VideoNode = memo(({ data }: NodeProps) => {
           {st.label}
         </div>
       </div>
-      <Handle type="source" position={Position.Right} className="!bg-green-500 !w-2.5 !h-2.5" />
     </div>
   );
 });

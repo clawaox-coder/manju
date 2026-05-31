@@ -1,11 +1,11 @@
 import { useMemo } from 'react';
-import type { Node } from '@xyflow/react';
+import type { CanvasNode } from '../buildGraph';
 
 const COL_X = { script: 0, ai: 380, storyboard: 650, video: 950, character: 350 };
 const ROW_GAP = { script: 200, storyboard: 230, character: 200 };
 const CANDIDATE_GAP_X = 200;
 
-export function computeLayout(nodes: Node[]): Node[] {
+export function computeLayout(nodes: CanvasNode[]): CanvasNode[] {
   if (nodes.length === 0) return [];
 
   // Transient selection nodes (candidate / selected / leaving) all share the
@@ -13,7 +13,7 @@ export function computeLayout(nodes: Node[]): Node[] {
   const candidates = nodes.filter((n) => n.id.startsWith('candidate-'));
   const nonCandidates = nodes.filter((n) => !n.id.startsWith('candidate-'));
 
-  const positioned: Node[] = [];
+  const positioned: CanvasNode[] = [];
 
   if (candidates.length > 0) {
     const baseX = candidates[0].type === 'script' ? COL_X.script : COL_X.storyboard;
@@ -49,6 +49,6 @@ export function computeLayout(nodes: Node[]): Node[] {
   return positioned;
 }
 
-export function useCanvasLayout(nodes: Node[]): Node[] {
+export function useCanvasLayout(nodes: CanvasNode[]): CanvasNode[] {
   return useMemo(() => computeLayout(nodes), [nodes]);
 }

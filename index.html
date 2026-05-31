@@ -4,7 +4,32 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <title>漫剧AI Studio</title>
+    <script>
+      // 防首屏闪白(FOUC):在 React 挂载前依据持久化主题同步给 <html> 加 .dark。
+      // 必须阻塞执行且早于首帧,任何异常都回退到系统偏好,不抛错、不阻塞渲染。
+      (function () {
+        try {
+          var theme = 'auto';
+          var raw = localStorage.getItem('manju-store');
+          if (raw) {
+            var parsed = JSON.parse(raw);
+            var t = parsed && parsed.state && parsed.state.theme;
+            if (t === 'light' || t === 'dark' || t === 'auto') theme = t;
+          }
+          var prefersDark =
+            window.matchMedia &&
+            window.matchMedia('(prefers-color-scheme: dark)').matches;
+          var isDark = theme === 'dark' || (theme === 'auto' && prefersDark);
+          if (isDark) document.documentElement.classList.add('dark');
+        } catch (e) {
+          /* localStorage 不可用或 JSON 损坏 — 静默回退到浅色,交由 React 接管 */
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

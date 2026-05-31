@@ -18,7 +18,7 @@ export interface Project {
 }
 
 export interface Shot {
-  id: number;
+  id: string | number;
   num: string;
   title: string;
   type: string;

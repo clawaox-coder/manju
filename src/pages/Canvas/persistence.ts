@@ -1,16 +1,16 @@
-import type { Node, Edge } from '@xyflow/react';
 import type { Decision } from './agent/types';
+import type { CanvasEdge, CanvasNode } from './buildGraph';
 
 const STORAGE_PREFIX = 'manju.canvas.';
 const DECISIONS_KEY_PREFIX = 'manju.canvas.decisions.';
 
 interface CanvasState {
-  nodes: Node[];
-  edges: Edge[];
+  nodes: CanvasNode[];
+  edges: CanvasEdge[];
   savedAt: string;
 }
 
-export function saveCanvasState(projectId: string, nodes: Node[], edges: Edge[]) {
+export function saveCanvasState(projectId: string, nodes: CanvasNode[], edges: CanvasEdge[]) {
   const state: CanvasState = {
     nodes: nodes.map((n) => ({ ...n, data: undefined })),
     edges,
@@ -34,7 +34,7 @@ export function loadCanvasPositions(projectId: string): Map<string, { x: number;
   }
 }
 
-export function loadCanvasEdges(projectId: string): Edge[] | null {
+export function loadCanvasEdges(projectId: string): CanvasEdge[] | null {
   const raw = localStorage.getItem(`${STORAGE_PREFIX}${projectId}`);
   if (!raw) return null;
   try {

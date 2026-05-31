@@ -1,5 +1,8 @@
 import { memo } from 'react';
-import { Handle, Position, type NodeProps } from '@xyflow/react';
+
+interface NodeProps {
+  data: unknown;
+}
 
 export interface AINodeData {
   label: string;
@@ -32,7 +35,6 @@ export const AINode = memo(({ data }: NodeProps) => {
       className={`bg-gradient-to-br from-primary/10 to-primary/[0.03] border border-primary/20 rounded-xl shadow-sm w-[156px] overflow-hidden transition-all ${clickable ? 'cursor-pointer hover:shadow-md hover:border-primary/40' : ''}`}
       onClick={() => clickable && onRun?.()}
     >
-      <Handle type="target" position={Position.Left} className="!bg-primary/60 !w-2 !h-2 !border-0" />
       <div className="px-3 py-2.5 flex items-center gap-2.5">
         <div className="w-7 h-7 rounded-lg bg-primary/15 text-primary flex items-center justify-center text-sm shrink-0">✨</div>
         <div className="min-w-0">
@@ -43,7 +45,6 @@ export const AINode = memo(({ data }: NodeProps) => {
           </div>
         </div>
       </div>
-      <Handle type="source" position={Position.Right} className="!bg-primary/60 !w-2 !h-2 !border-0" />
     </div>
   );
 });

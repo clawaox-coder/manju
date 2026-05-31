@@ -21,7 +21,8 @@ import {
   Laptop,
   Smartphone,
   Monitor,
-  Sparkles
+  Sparkles,
+  Rocket
 } from 'lucide-react';
 
 const TABS = [
@@ -71,8 +72,8 @@ export default function Settings() {
                   key={t.key}
                   onClick={() => setTab(t.key)}
                   className={cn(
-                    'w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition',
-                    tab === t.key ? 'gradient-purple-soft text-brand-700 font-medium' : 'text-foreground/70 hover:bg-accent'
+                    'w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition cursor-pointer',
+                    tab === t.key ? 'bg-primary/10 text-primary font-medium' : 'text-foreground/70 hover:bg-accent'
                   )}
                 >
                   <Icon className="w-4 h-4" />
@@ -89,7 +90,7 @@ export default function Settings() {
               <h2 className="font-semibold">个人资料</h2>
               <div className="flex items-center gap-5 pb-5 border-b border-border">
                 <Avatar className="w-20 h-20">
-                  <AvatarFallback className="bg-gradient-to-br from-pink-300 via-purple-300 to-indigo-400 text-white font-bold text-2xl">{displayName.slice(0, 1)}</AvatarFallback>
+                  <AvatarFallback className="bg-foreground text-background font-bold text-2xl">{displayName.slice(0, 1)}</AvatarFallback>
                 </Avatar>
                 <div className="flex gap-2">
                   <Button variant="outline" size="sm" onClick={() => toast.info('请选择头像图片')}>
@@ -145,7 +146,7 @@ export default function Settings() {
                   <select
                     value={preferences[key]}
                     onChange={(e) => updatePreference(key, e.target.value)}
-                    className="px-3 py-1.5 rounded-lg border border-border text-sm bg-background"
+                    className="px-3 py-1.5 rounded-lg border border-border text-sm bg-background cursor-pointer"
                   >
                     {options.map(([v, l]) => (
                       <option key={v} value={v}>
@@ -187,7 +188,7 @@ export default function Settings() {
                         setTheme(key);
                         toast.success(`主题已切换为「${label}」`);
                       }}
-                      className={cn('p-3 rounded-xl border-2 transition', theme === key ? 'border-brand-500' : 'border-border hover:border-muted-foreground/30')}
+                      className={cn('p-3 rounded-xl border-2 transition cursor-pointer', theme === key ? 'border-foreground' : 'border-border hover:border-muted-foreground/30')}
                     >
                       <div className={cn('aspect-video rounded-lg mb-2 bg-gradient-to-br border border-border', grad)} />
                       <div className="text-sm font-medium">{label}</div>
@@ -210,8 +211,8 @@ export default function Settings() {
                         toast.success('界面密度已更新');
                       }}
                       className={cn(
-                        'p-3 rounded-xl border-2 text-left transition',
-                        density === key ? 'border-brand-500 bg-brand-50/30' : 'border-border hover:border-muted-foreground/30'
+                        'p-3 rounded-xl border-2 text-left transition cursor-pointer',
+                        density === key ? 'border-foreground bg-accent' : 'border-border hover:border-muted-foreground/30'
                       )}
                     >
                       <div className="text-sm font-medium mb-0.5">{label}</div>
@@ -344,16 +345,16 @@ export default function Settings() {
             <Card className="p-6">
               <h2 className="font-semibold mb-5">已连接的服务</h2>
               <div className="grid grid-cols-2 gap-3">
-                {[
+                {([
                   { name: '抖音创作者', desc: '一键发布视频', icon: '🎵', connected: true },
                   { name: 'B站', desc: '同步到 Bilibili', icon: '📺', connected: true },
                   { name: '微信视频号', desc: '分发到视频号', icon: '💬', connected: false },
                   { name: 'YouTube', desc: '国际版分发', icon: '▶️', connected: false },
-                  { name: '飞书', desc: '团队消息通知', icon: '🚀', connected: true },
+                  { name: '飞书', desc: '团队消息通知', icon: 'rocket', connected: true },
                   { name: 'OBS Studio', desc: '直播推流', icon: '📡', connected: false }
-                ].map((s) => (
+                ] as const).map((s) => (
                   <div key={s.name} className="p-4 rounded-xl border border-border flex items-center gap-3">
-                    <div className="text-3xl">{s.icon}</div>
+                    <div className="text-3xl">{s.icon === 'rocket' ? <Rocket className="w-7 h-7 text-foreground" /> : s.icon}</div>
                     <div className="flex-1 min-w-0">
                       <div className="font-semibold text-sm">{s.name}</div>
                       <div className="text-xs text-muted-foreground">{s.desc}</div>
