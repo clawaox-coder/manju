@@ -6,6 +6,8 @@ import { Sparkles, FolderOpen, ArrowLeft } from 'lucide-react';
 import { ChatPanel } from './chat/ChatPanel';
 import { CanvasToolbar } from './CanvasToolbar';
 import { AssetLibraryPanel } from './AssetLibraryPanel';
+import { UploadDialog } from '@/components/domain/UploadDialog';
+import type { AssetDTO } from '@/lib/api/assets';
 import { AccountMenu } from '@/components/layout/AccountMenu';
 import { AgentStateMachine } from './agent/AgentStateMachine';
 import { makeUserMessage, makeAiMessage, makeProgressMessage, makeErrorAction, makeSystemMessage, makeCardGroupMessage, makeMilestoneMessage } from './agent/AgentMessages';
@@ -255,6 +257,8 @@ function CanvasInner() {
   const titleGenStartedRef = useRef(false);
   const [loading, setLoading] = useState(false);
   const [assetPanelOpen, setAssetPanelOpen] = useState(false);
+  // 从聊天框拖拽/粘贴/选择的参考图：暂存待上传，打开上传弹窗。
+  const [pendingImage, setPendingImage] = useState<File | null>(null);
   const editorRef = useRef<ReturnType<typeof useEditor> | null>(null);
   // 防止同一制作动作并发触发（trigger 可能在连续两轮里重复出现）。
   const busyRef = useRef(false);
@@ -534,6 +538,18 @@ function CanvasInner() {
     void runAgentTurn(`我想聊聊画布上的「${nodeId}」这个节点。`);
   }, [sm, syncState, runAgentTurn]);
 
+  // 聊天框拖拽/粘贴/选择参考图 → 暂存并打开上传弹窗（角色资产，自动落画布）。
+  const handleAttachImage = useCallback((file: File) => {
+    setPendingImage(file);
+  }, []);
+
+  // 参考图上传成功 → 资产已创建（react-query 失效 ['assets'] 自动刷新角色节点落画布），
+  // 在对话里给一条确认，并清掉暂存。
+  const handleImageUploaded = useCallback((asset: AssetDTO) => {
+    setPendingImage(null);
+    setMessages((m) => [...m, makeSystemMessage(`🖼 参考图「${asset.name}」已加入，画布上能看到了`)]);
+  }, []);
+
   // Pick an asset from the library → drop a note for it at the viewport center.
   const handleAssetPick = useCallback((assetId: string, name: string) => {
     const editor = editorRef.current;
@@ -583,6 +599,7 @@ function CanvasInner() {
         suggestedPrompts={suggestedPrompts}
         title={projectName}
         onTitleChange={handleTitleChange}
+        onAttachImage={handleAttachImage}
       />
       <div className="flex-1 relative">
         <div className="absolute top-4 left-4 z-[300] flex items-center gap-3">
@@ -618,6 +635,16 @@ function CanvasInner() {
           open={assetPanelOpen}
           onClose={() => setAssetPanelOpen(false)}
           onPick={handleAssetPick}
+        />
+        <UploadDialog
+          key={pendingImage ? `${pendingImage.name}-${pendingImage.size}` : 'none'}
+          open={pendingImage !== null}
+          onOpenChange={(next) => { if (!next) setPendingImage(null); }}
+          assetType="character"
+          accept="image/*"
+          title="添加参考图（角色）"
+          initialFile={pendingImage}
+          onUploaded={handleImageUploaded}
         />
       </div>
     </div>

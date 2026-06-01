@@ -113,7 +113,7 @@ export function buildCanvasGraph(
         title: `Character · ${char.name}`,
         name: char.name,
         description: char.description || '',
-        avatar: char.thumbnail_url || char.avatar,
+        avatar: char.thumbnail_url || char.avatar || char.file_url,
         tags: char.tags,
       },
     });

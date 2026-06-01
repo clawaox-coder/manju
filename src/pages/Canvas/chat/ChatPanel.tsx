@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, type ReactNode } from 'react';
-import { ArrowUp, Sparkles, Pencil, CheckCircle2 } from 'lucide-react';
+import { ArrowUp, Sparkles, Pencil, CheckCircle2, ImagePlus } from 'lucide-react';
 import type { ChatMessage } from '../agent/types';
 import { MessageThinking } from './MessageThinking';
 import { MessageProgress } from './MessageProgress';
@@ -18,6 +18,8 @@ interface ChatPanelProps {
   suggestedPrompts: string[];
   title: string;
   onTitleChange: (title: string) => void;
+  /** 用户从聊天框拖拽/粘贴/选择的图片 → 上层打开上传弹窗并落画布。 */
+  onAttachImage?: (file: File) => void;
 }
 
 // 把 AI 文本渲染成分层结构：以 - / • 开头的行聚成 bullet 列表，其余按段落，
@@ -50,11 +52,13 @@ function renderRichText(text: string): ReactNode {
 
 export function ChatPanel({
   messages, onSendMessage, onSelectOption, onSelectCard, onAction, loading,
-  stage, suggestedPrompts, title, onTitleChange,
+  stage, suggestedPrompts, title, onTitleChange, onAttachImage,
 }: ChatPanelProps) {
   const [input, setInput] = useState('');
   const [expandedThinking, setExpandedThinking] = useState<Set<string>>(new Set());
+  const [dropActive, setDropActive] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
   // 标题内联编辑：editingTitle 非 null 时进入编辑态。
   const [editingTitle, setEditingTitle] = useState<string | null>(null);
   const titleInputRef = useRef<HTMLInputElement>(null);
@@ -261,18 +265,53 @@ export function ChatPanel({
       )}
 
       <div className="px-4 py-3 border-t border-border">
-        <div className="flex items-center gap-2 rounded-2xl border border-border bg-card px-3 py-2.5 focus-within:border-primary/40 transition">
+        <div
+          className={cn(
+            'flex items-center gap-2 rounded-2xl border bg-card px-3 py-2.5 transition',
+            dropActive ? 'border-primary border-dashed bg-primary/5' : 'border-border focus-within:border-primary/40',
+          )}
+          onDragOver={onAttachImage ? (e) => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setDropActive(true); } } : undefined}
+          onDragLeave={onAttachImage ? () => setDropActive(false) : undefined}
+          onDrop={onAttachImage ? (e) => {
+            const f = Array.from(e.dataTransfer.files).find((x) => x.type.startsWith('image/'));
+            if (f) { e.preventDefault(); setDropActive(false); onAttachImage(f); }
+          } : undefined}
+        >
+          {onAttachImage && (
+            <>
+              <button
+                type="button"
+                title="添加角色/风格参考图"
+                className="text-muted-foreground hover:text-primary transition shrink-0"
+                onClick={() => imageInputRef.current?.click()}
+                disabled={loading}
+              >
+                <ImagePlus className="w-4 h-4" />
+              </button>
+              <input
+                ref={imageInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) onAttachImage(f); e.target.value = ''; }}
+              />
+            </>
+          )}
           <input
             className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
-            placeholder="说说你想做的短片，比如：60 秒都市修仙…"
+            placeholder={dropActive ? '松手添加参考图…' : '说说你想做的短片，比如：60 秒都市修仙…'}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+            onPaste={onAttachImage ? (e) => {
+              const f = Array.from(e.clipboardData.files).find((x) => x.type.startsWith('image/'));
+              if (f) { e.preventDefault(); onAttachImage(f); }
+            } : undefined}
             disabled={loading}
           />
           <button
             type="button"
-            className="w-7 h-7 rounded-full bg-primary flex items-center justify-center text-primary-foreground disabled:opacity-40 transition"
+            className="w-7 h-7 rounded-full bg-primary flex items-center justify-center text-primary-foreground disabled:opacity-40 transition shrink-0"
             onClick={handleSend}
             disabled={!input.trim() || loading}
           >
