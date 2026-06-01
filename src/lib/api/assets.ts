@@ -102,6 +102,25 @@ export async function signUpload(input: SignUploadInput): Promise<SignUploadResu
   return request<SignUploadResult>('/v1/upload/sign', { method: 'POST', body: input, base: ASSET_BASE });
 }
 
+// ---- project_assets (项目 ↔ 资产关联, role 区分用途) ----
+
+export type AssetRole = 'character_ref' | 'style_ref' | 'script_ref';
+
+// 把资产以指定 role 关联到项目(幂等)。
+export async function linkProjectAsset(projectId: string, assetId: string, role: AssetRole): Promise<void> {
+  await request(`/v1/projects/${projectId}/assets`, {
+    method: 'POST',
+    body: { asset_id: assetId, role },
+    base: ASSET_BASE,
+  });
+}
+
+// 列出项目下某 role 的关联资产。
+export async function listProjectAssets(projectId: string, role: AssetRole = 'character_ref'): Promise<AssetDTO[]> {
+  const env = await requestEnvelope<AssetDTO[]>(`/v1/projects/${projectId}/assets?role=${role}`, { base: ASSET_BASE });
+  return env.data;
+}
+
 function buildQuery(params: Record<string, unknown>): string {
   const entries = Object.entries(params).filter(([, v]) => v != null && v !== '');
   if (entries.length === 0) return '';

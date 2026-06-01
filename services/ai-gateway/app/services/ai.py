@@ -70,6 +70,82 @@ async def _anthropic_once(prompt: str, system: str, max_tokens: int = 2000) -> t
     return text, msg.usage.input_tokens, msg.usage.output_tokens
 
 
+# ---- 多模态调用 (文本 + 参考图) ----
+
+# spike 教训 + 防超限: 限制图片数量与单图大小, 过小/损坏图跳过.
+MAX_REF_IMAGES = 4
+MAX_IMAGE_BYTES = 4 * 1024 * 1024  # 单图 4MB 上限
+MIN_IMAGE_BYTES = 128              # 过小(退化)图上游会 400, 跳过
+
+
+async def _anthropic_once_multimodal(
+    prompt: str, system: str, images: list[dict], max_tokens: int = 2000,
+) -> tuple[str, int, int]:
+    """带参考图的调用. images: [{"media_type": "image/png", "data": <base64>}].
+    images 为空时等价于纯文本(但调用方一般直接走 _anthropic_once)。"""
+    client = _client()
+    s = get_settings()
+    content: list[dict] = [
+        {"type": "image", "source": {"type": "base64", "media_type": im["media_type"], "data": im["data"]}}
+        for im in images
+    ]
+    content.append({"type": "text", "text": prompt})
+    msg = await client.messages.create(
+        model=s.anthropic_model,
+        max_tokens=max_tokens,
+        system=system,
+        messages=[{"role": "user", "content": content}],
+    )
+    text = "".join(block.text for block in msg.content if block.type == "text")
+    return text, msg.usage.input_tokens, msg.usage.output_tokens
+
+
+async def _fetch_project_reference_images(project_id: str, team_id: str, role: str = "character_ref") -> list[dict]:
+    """取项目参考图喂模型用. 用 S2S token 调 asset-service 列资产 → 下载 → 校验 → base64.
+    任何失败都返回空列表(调用方据此降级为纯文本), 不抛异常 — 参考图不应搞挂主流程。
+    返回 [{"media_type": ..., "data": <base64>}], 最多 MAX_REF_IMAGES 张。"""
+    import base64
+    from .. import internal_token
+
+    if not internal_token.has_s2s():
+        logger.warning("S2S token 不可用, 跳过参考图(降级纯文本)")
+        return []
+    s = get_settings()
+    out: list[dict] = []
+    try:
+        token = internal_token.mint_s2s_token(team_id)
+        async with httpx.AsyncClient(timeout=10) as c:
+            # 按 project_id + role 精确取关联资产(走 project_assets 接口)
+            resp = await c.get(
+                f"{s.asset_service_url}/v1/projects/{project_id}/assets",
+                params={"role": role},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            resp.raise_for_status()
+            assets = resp.json().get("data", [])
+            for a in assets[:MAX_REF_IMAGES]:
+                url = a.get("file_url") or a.get("thumbnail_url")
+                if not url:
+                    continue
+                try:
+                    img = await c.get(url)
+                    img.raise_for_status()
+                    raw = img.content
+                    if not (MIN_IMAGE_BYTES <= len(raw) <= MAX_IMAGE_BYTES):
+                        logger.warning(f"参考图大小越界({len(raw)}B), 跳过: {a.get('id')}")
+                        continue
+                    media = img.headers.get("content-type", "image/png").split(";")[0]
+                    if not media.startswith("image/"):
+                        media = "image/png"
+                    out.append({"media_type": media, "data": base64.standard_b64encode(raw).decode()})
+                except Exception as e:  # 单图下载失败不影响其他
+                    logger.warning(f"参考图下载失败, 跳过 {a.get('id')}: {e}")
+    except Exception as e:
+        logger.warning(f"取项目参考图失败(降级纯文本): {e}")
+        return []
+    return out
+
+
 def _strip_trailing_commas(s: str) -> str:
     """删掉结构性尾逗号 (',' 紧跟 '}' 或 ']'). 仅在严格 loads 失败后调用,
     所以合法 JSON (含字符串里的 ',]') 不会走到这, 不必担心误伤字符串内容."""
@@ -325,19 +401,28 @@ async def storyboard_generate_async(
     from uuid import UUID as _UUID
     s = get_settings()
 
+    # 取项目角色参考图(失败/无图均返回空 → 降级纯文本, 不阻断)
+    ref_images = await _fetch_project_reference_images(project_id, team_id, role="character_ref")
+
     prompt = (
         f"项目 ID: {project_id}\n"
         f"风格: {style}\n"
         f"regenerate_all: {regenerate_all}\n"
         f"shot_ids: {shot_ids or '(无)'}\n\n"
-        "请生成 3-6 个分镜。"
+        + ("已提供角色参考图, 生成分镜时请保持角色外观与参考图一致。\n\n" if ref_images else "")
+        + "请生成 3-6 个分镜。"
     )
 
     start = time.monotonic()
     try:
-        text, in_tok, out_tok = await _anthropic_once(
-            prompt, STORYBOARD_SYSTEM, max_tokens=6000
-        )
+        if ref_images:
+            text, in_tok, out_tok = await _anthropic_once_multimodal(
+                prompt, STORYBOARD_SYSTEM, ref_images, max_tokens=6000
+            )
+        else:
+            text, in_tok, out_tok = await _anthropic_once(
+                prompt, STORYBOARD_SYSTEM, max_tokens=6000
+            )
         try:
             parsed = _parse_json_loose(text)
         except json.JSONDecodeError as e:

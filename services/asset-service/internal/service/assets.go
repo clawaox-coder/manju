@@ -180,3 +180,37 @@ func (s *Assets) SignUpload(ctx context.Context, teamID uuid.UUID, in SignUpload
 	}
 	return res, nil
 }
+
+// ---- project_assets (项目 ↔ 资产关联, role 区分用途) ----
+
+// 允许的关联用途. 后续新增剧本/分镜/风格参考时在此扩展.
+var validRoles = map[string]bool{
+	"character_ref": true,
+	"style_ref":     true,
+	"script_ref":    true,
+}
+
+func (s *Assets) LinkProjectAsset(ctx context.Context, teamID, userID, projectID, assetID uuid.UUID, role string) error {
+	if !validRoles[role] {
+		return apperr.InvalidInput("role 不在允许范围 (character_ref/style_ref/script_ref)")
+	}
+	return s.Repo.LinkAsset(ctx, teamID, userID, projectID, assetID, role)
+}
+
+func (s *Assets) UnlinkProjectAsset(ctx context.Context, teamID, userID, projectID, assetID uuid.UUID, role string) error {
+	if !validRoles[role] {
+		return apperr.InvalidInput("role 不在允许范围")
+	}
+	return s.Repo.UnlinkAsset(ctx, teamID, userID, projectID, assetID, role)
+}
+
+// ListProjectAssets 按 (project, role) 列出关联资产. role 为空时默认 character_ref.
+func (s *Assets) ListProjectAssets(ctx context.Context, teamID, userID, projectID uuid.UUID, role string) ([]repo.Asset, error) {
+	if role == "" {
+		role = "character_ref"
+	}
+	if !validRoles[role] {
+		return nil, apperr.InvalidInput("role 不在允许范围")
+	}
+	return s.Repo.ListByProjectRole(ctx, teamID, userID, projectID, role)
+}

@@ -266,7 +266,11 @@ services:
       HTTP_PORT: "8005"
       DATABASE_URL: "postgres://manju_app:manju_app@postgres:5432/${POSTGRES_DB:-manju}?sslmode=disable"
       JWT_PUBLIC_KEY_PATH: /run/secrets/jwt-public.pem
+      # S2S token 签发用私钥(后台任务调 asset-service 取参考图)。dev 专用,生产另议。
+      JWT_PRIVATE_KEY_PATH: /run/secrets/jwt-private.pem
       JWT_ISSUER: manju-auth
+      # asset-service 内网地址(取项目参考图)
+      ASSET_SERVICE_URL: "http://asset-service:8004"
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
       ANTHROPIC_BASE_URL: "${ANTHROPIC_BASE_URL:-}"
       ANTHROPIC_MODEL: "claude-sonnet-4-6"
@@ -276,6 +280,7 @@ services:
       - "8005:8005"
     volumes:
       - ./secrets/jwt-public.pem:/run/secrets/jwt-public.pem:ro
+      - ./secrets/jwt-private.pem:/run/secrets/jwt-private.pem:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8005/healthz',timeout=3).status==200 else 1)"]
       interval: 5s

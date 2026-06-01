@@ -7,7 +7,7 @@ import { ChatPanel } from './chat/ChatPanel';
 import { CanvasToolbar } from './CanvasToolbar';
 import { AssetLibraryPanel } from './AssetLibraryPanel';
 import { UploadDialog } from '@/components/domain/UploadDialog';
-import type { AssetDTO } from '@/lib/api/assets';
+import { linkProjectAsset, type AssetDTO } from '@/lib/api/assets';
 import { AccountMenu } from '@/components/layout/AccountMenu';
 import { AgentStateMachine } from './agent/AgentStateMachine';
 import { makeUserMessage, makeAiMessage, makeProgressMessage, makeErrorAction, makeSystemMessage, makeCardGroupMessage, makeMilestoneMessage } from './agent/AgentMessages';
@@ -543,12 +543,19 @@ function CanvasInner() {
     setPendingImage(file);
   }, []);
 
-  // 参考图上传成功 → 资产已创建（react-query 失效 ['assets'] 自动刷新角色节点落画布），
-  // 在对话里给一条确认，并清掉暂存。
+  // 参考图上传成功 → 资产已创建，再把它以 character_ref 关联到当前项目
+  // （这样生成时后端能按 project 拉到它喂模型）。react-query 失效 ['assets']
+  // 自动刷新角色节点落画布；关联失败不阻断，仅提示。
   const handleImageUploaded = useCallback((asset: AssetDTO) => {
     setPendingImage(null);
-    setMessages((m) => [...m, makeSystemMessage(`🖼 参考图「${asset.name}」已加入，画布上能看到了`)]);
-  }, []);
+    if (projectId) {
+      void linkProjectAsset(projectId, asset.id, 'character_ref')
+        .then(() => setMessages((m) => [...m, makeSystemMessage(`🖼 参考图「${asset.name}」已加入，画布上能看到了`)]))
+        .catch(() => setMessages((m) => [...m, makeSystemMessage(`🖼 参考图「${asset.name}」已上传，但关联到项目失败，生成时可能用不上`)]));
+    } else {
+      setMessages((m) => [...m, makeSystemMessage(`🖼 参考图「${asset.name}」已上传`)]);
+    }
+  }, [projectId]);
 
   // Pick an asset from the library → drop a note for it at the viewport center.
   const handleAssetPick = useCallback((assetId: string, name: string) => {

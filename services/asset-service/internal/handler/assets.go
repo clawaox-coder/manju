@@ -390,3 +390,65 @@ func (h *Assets) SignUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	httpx.WriteJSON(w, r, http.StatusOK, res)
 }
+
+// ---- project_assets (项目 ↔ 资产关联) ----
+
+func parseProjectID(r *http.Request) (uuid.UUID, error) {
+	raw := chi.URLParam(r, "pid")
+	id, err := uuid.Parse(raw)
+	if err != nil {
+		return uuid.Nil, apperr.InvalidInput("project id 不是合法 uuid").WithCause(err)
+	}
+	return id, nil
+}
+
+type linkReq struct {
+	AssetID string `json:"asset_id"`
+	Role    string `json:"role"`
+}
+
+// POST /v1/projects/{pid}/assets — 关联一个资产到项目 (body: asset_id, role)
+func (h *Assets) LinkProjectAsset(w http.ResponseWriter, r *http.Request) {
+	teamID := middleware.MustTeamID(r.Context())
+	userID := middleware.MustUserID(r.Context())
+	pid, err := parseProjectID(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	var body linkReq
+	if err := httpx.DecodeJSON(r, &body); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	assetID, err := uuid.Parse(body.AssetID)
+	if err != nil {
+		httpx.WriteError(w, r, apperr.InvalidInput("asset_id 不是合法 uuid"))
+		return
+	}
+	if err := h.Svc.LinkProjectAsset(r.Context(), teamID, userID, pid, assetID, body.Role); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, r, http.StatusCreated, map[string]string{
+		"project_id": pid.String(), "asset_id": assetID.String(), "role": body.Role,
+	})
+}
+
+// GET /v1/projects/{pid}/assets?role= — 列出项目下某 role 的关联资产
+func (h *Assets) ListProjectAssets(w http.ResponseWriter, r *http.Request) {
+	teamID := middleware.MustTeamID(r.Context())
+	userID := middleware.MustUserID(r.Context())
+	pid, err := parseProjectID(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	role := r.URL.Query().Get("role")
+	assets, err := h.Svc.ListProjectAssets(r.Context(), teamID, userID, pid, role)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, r, http.StatusOK, toDTOs(assets))
+}
