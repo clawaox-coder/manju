@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import * as api from '@/lib/api/assets';
-import type { ListAssetsParams, CreateAssetInput } from '@/lib/api/assets';
+import type { ListAssetsParams, CreateAssetInput, AssetType } from '@/lib/api/assets';
 
 export function useAssets(params: ListAssetsParams = {}) {
   return useQuery({
@@ -9,10 +9,10 @@ export function useAssets(params: ListAssetsParams = {}) {
   });
 }
 
-export function useAsset(id: string | undefined) {
+export function useAsset(type: AssetType, id: string | undefined) {
   return useQuery({
-    queryKey: ['asset', id],
-    queryFn: () => api.getAsset(id!),
+    queryKey: ['asset', type, id],
+    queryFn: () => api.getAsset(type, id!),
     enabled: !!id,
   });
 }
@@ -28,8 +28,8 @@ export function useCreateAsset() {
 export function useUpdateAsset() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, input }: { id: string; input: Partial<Omit<CreateAssetInput, 'type'>> }) =>
-      api.updateAsset(id, input),
+    mutationFn: ({ type, id, input }: { type: AssetType; id: string; input: Partial<Omit<CreateAssetInput, 'type'>> }) =>
+      api.updateAsset(type, id, input),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['assets'] }); },
   });
 }
@@ -37,7 +37,7 @@ export function useUpdateAsset() {
 export function useDeleteAsset() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => api.deleteAsset(id),
+    mutationFn: ({ type, id }: { type: AssetType; id: string }) => api.deleteAsset(type, id),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['assets'] }); },
   });
 }
