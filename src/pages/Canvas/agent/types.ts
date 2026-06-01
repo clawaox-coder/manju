@@ -25,7 +25,7 @@ export interface AgentState {
   focusedNodeId: string | null;
 }
 
-export type MessageType = 'text' | 'thinking' | 'options' | 'card-group' | 'preview' | 'progress' | 'action' | 'context-switch';
+export type MessageType = 'text' | 'thinking' | 'options' | 'card-group' | 'preview' | 'progress' | 'action' | 'context-switch' | 'milestone';
 
 export interface CardOption {
   id: string;
@@ -40,6 +40,8 @@ export interface ChatMessage {
   role: 'ai' | 'user' | 'system';
   type: MessageType;
   text: string;
+  /** 该 AI 消息产生时所处阶段，决定显示哪个角色头像（创意总监/编剧/…）。 */
+  agentRole?: Stage;
   thinking?: string;
   thinkingCollapsed?: boolean;
   options?: { label: string; value: string }[];

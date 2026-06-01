@@ -8,7 +8,7 @@ import { CanvasToolbar } from './CanvasToolbar';
 import { AssetLibraryPanel } from './AssetLibraryPanel';
 import { AccountMenu } from '@/components/layout/AccountMenu';
 import { AgentStateMachine } from './agent/AgentStateMachine';
-import { makeUserMessage, makeAiMessage, makeProgressMessage, makeErrorAction, makeSystemMessage, makeCardGroupMessage } from './agent/AgentMessages';
+import { makeUserMessage, makeAiMessage, makeProgressMessage, makeErrorAction, makeSystemMessage, makeCardGroupMessage, makeMilestoneMessage } from './agent/AgentMessages';
 import type { ChatMessage, Stage } from './agent/types';
 import { useStore } from '@/store';
 import { useEffectiveTheme } from '@/hooks/useTheme';
@@ -66,8 +66,14 @@ async function genOutline(projectId: string, instruction: string): Promise<strin
   let full = '';
   for await (const evt of streamScriptContinue({ project_id: projectId, context: '', instruction })) {
     if (evt.event === 'delta') full += (evt.data as { text?: string }).text ?? '';
+    else if (evt.event === 'error') {
+      // 后端以 error 事件（而非 HTTP 错误）上报失败，需主动抛出，否则会静默返回空串。
+      throw new Error((evt.data as { message?: string }).message || 'AI 生成失败');
+    }
   }
-  return full.trim();
+  const text = full.trim();
+  if (!text) throw new Error('AI 未返回内容'); // 空结果按失败处理，触发重试而非渲染空卡
+  return text;
 }
 
 async function pollAiTask(taskId: string): Promise<boolean> {
@@ -275,7 +281,7 @@ function CanvasInner() {
     sm.restore({ hasScript, hasShots, hasVoice: false, hasVideo: false });
     syncState();
     setMessages([
-      makeAiMessage('嗨，我是你的创作搭档。想做个什么样的短片？随便聊聊就行——一句灵感、一个画面，都可以。'),
+      makeAiMessage('嗨，我是你的创作搭档。想做个什么样的短片？随便聊聊就行——一句灵感、一个画面，都可以。', { stage: 'idea' }),
     ]);
   }, [projectId, script, shots, syncState, sm]);
 
@@ -288,7 +294,7 @@ function CanvasInner() {
     if (!projectId || busyRef.current) return;
     busyRef.current = true;
     sm.enterBusy('script'); syncState();
-    setMessages((m) => [...m, makeProgressMessage('正在构思 3 个剧本方向...', '生成剧本')]);
+    setMessages((m) => [...m, makeProgressMessage('正在构思 3 个剧本方向...', '生成剧本', 'script')]);
     try {
       const { type = '漫剧', style = '日系动漫', tone, duration = '1分钟', audience = '年轻人' } = sm.state.ideaContext;
       const base = `用${type}形式、${style}风格创作一个短剧大纲（约${duration}，受众${audience}${tone ? `，${tone}基调` : ''}）。直接给出分场景大纲。`;
@@ -307,10 +313,10 @@ function CanvasInner() {
       // 缓存内容供点选时取用。
       scriptCandidatesRef.current = new Map(cards.map((c) => [c.id, c.description]));
       sm.markReady('script'); syncState();
-      setMessages((m) => [...m, makeCardGroupMessage('给你三个方向，点一个我就照着展开成完整剧本：', cards)]);
+      setMessages((m) => [...m, makeCardGroupMessage('给你三个方向，点一个我就照着展开成完整剧本：', cards, 'script')]);
     } catch {
       sm.markReady('idea'); syncState();
-      setMessages((m) => [...m, makeErrorAction('生成剧本时出错了。', '重试生成', '点击重新生成剧本')]);
+      setMessages((m) => [...m, makeErrorAction('生成剧本时出错了。', '重试生成', '点击重新生成剧本', 'idea')]);
     } finally {
       busyRef.current = false;
     }
@@ -320,7 +326,7 @@ function CanvasInner() {
     if (!projectId || busyRef.current) return;
     busyRef.current = true;
     sm.enterBusy('storyboard'); syncState();
-    setMessages((m) => [...m, makeProgressMessage('🎨 正在生成分镜...', '生成分镜')]);
+    setMessages((m) => [...m, makeProgressMessage('🎨 正在生成分镜...', '生成分镜', 'storyboard')]);
     try {
       const style = sm.state.ideaContext.style ?? 'default';
       const res = await storyboardGenerate({ project_id: projectId, style, regenerate_all: true });
@@ -328,10 +334,10 @@ function CanvasInner() {
       if (!ok) throw new Error('storyboard task failed');
       await refetchShots();
       sm.markReady('storyboard'); syncState();
-      setMessages((m) => [...m, makeAiMessage('分镜出来了，画布右侧能看到每一镜。要改某一镜，或者去配音都行。')]);
+      setMessages((m) => [...m, makeMilestoneMessage('分镜已生成', 'storyboard'), makeAiMessage('每一镜都在画布右侧了，要改某一镜，或者直接去配音。', { stage: 'storyboard' })]);
     } catch {
       sm.markReady('script'); syncState();
-      setMessages((m) => [...m, makeErrorAction('生成分镜时出错了。', '重试生成', '点击重新生成分镜')]);
+      setMessages((m) => [...m, makeErrorAction('生成分镜时出错了。', '重试生成', '点击重新生成分镜', 'script')]);
     } finally {
       busyRef.current = false;
     }
@@ -341,15 +347,15 @@ function CanvasInner() {
     if (!projectId || busyRef.current) return;
     busyRef.current = true;
     sm.enterBusy('voice'); syncState();
-    setMessages((m) => [...m, makeProgressMessage('🎙 正在为角色匹配配音...', '配音匹配')]);
+    setMessages((m) => [...m, makeProgressMessage('🎙 正在为角色匹配配音...', '配音匹配', 'voice')]);
     try {
       const res = await voiceMatch({ project_id: projectId, content: script?.content ?? '', auto_assign: true });
       const n = res.matches?.length ?? 0;
       sm.markReady('voice'); syncState();
-      setMessages((m) => [...m, makeAiMessage(`已为 ${n} 个角色匹配了配音。想换某个角色的声音、还是直接出片？`)]);
+      setMessages((m) => [...m, makeMilestoneMessage(`配音完成 · ${n} 个角色`, 'voice'), makeAiMessage('想换某个角色的声音，还是直接出片？', { stage: 'voice' })]);
     } catch {
       sm.markReady('storyboard'); syncState();
-      setMessages((m) => [...m, makeErrorAction('配音匹配失败。', '重试配音', '点击重新匹配')]);
+      setMessages((m) => [...m, makeErrorAction('配音匹配失败。', '重试配音', '点击重新匹配', 'storyboard')]);
     } finally {
       busyRef.current = false;
     }
@@ -359,21 +365,21 @@ function CanvasInner() {
     if (!projectId || busyRef.current) return;
     busyRef.current = true;
     sm.enterBusy('video'); syncState();
-    setMessages((m) => [...m, makeProgressMessage('🎬 正在渲染视频...', '渲染中')]);
+    setMessages((m) => [...m, makeProgressMessage('🎬 正在渲染视频...', '渲染中', 'video')]);
     try {
       const job = await createRender(
         { project_id: projectId, resolution: '1080p', format: 'mp4' },
         `render-${projectId}-${Date.now()}`,
       );
       const result = await pollRender(job.job_id, () => {
-        setMessages((m) => [...m, makeAiMessage('比预期久一点，还在渲染中...')]);
+        setMessages((m) => [...m, makeAiMessage('比预期久一点，还在渲染中...', { stage: 'video' })]);
       });
       if (!result.ok) throw new Error('render failed');
       sm.markReady('video'); syncState();
-      setMessages((m) => [...m, makeAiMessage('🎉 视频出来了！右上角可以预览或下载。想调哪段，点画布节点告诉我。')]);
+      setMessages((m) => [...m, makeMilestoneMessage('视频已出片', 'video'), makeAiMessage('右上角可以预览或下载。想调哪段，点画布节点告诉我。', { stage: 'video' })]);
     } catch {
       sm.markReady('voice'); syncState();
-      setMessages((m) => [...m, makeErrorAction('渲染遇到问题。', '重试渲染', '点击重新生成视频')]);
+      setMessages((m) => [...m, makeErrorAction('渲染遇到问题。', '重试渲染', '点击重新生成视频', 'voice')]);
     } finally {
       busyRef.current = false;
     }
@@ -419,10 +425,10 @@ function CanvasInner() {
         },
       });
       sm.mergeIdeaContext(res.extracted);
-      setMessages((m) => [...m, makeAiMessage(res.reply, { thinking: res.thinking, options: res.options })]);
+      setMessages((m) => [...m, makeAiMessage(res.reply, { thinking: res.thinking, options: res.options, stage: sm.state.stage })]);
       executeTrigger(res.trigger);
     } catch {
-      setMessages((m) => [...m, makeAiMessage('网络出了点问题，请再试一次。')]);
+      setMessages((m) => [...m, makeAiMessage('网络出了点问题，请再试一次。', { stage: sm.state.stage })]);
     } finally {
       setLoading(false);
     }
@@ -491,9 +497,9 @@ function CanvasInner() {
       await updateScript.mutateAsync({ content, expected_version_no: script?.version_no ?? 0 });
       scriptCandidatesRef.current.clear();
       sm.markReady('script'); syncState();
-      setMessages((m) => [...m, makeAiMessage('好，这个方向已经定下来，画布上能看到完整剧本了。想再调哪段，或者直接说"开始分镜"。')]);
+      setMessages((m) => [...m, makeMilestoneMessage('剧本已定', 'script'), makeAiMessage('画布上能看到完整剧本了。想再调哪段，或者直接说"开始分镜"。', { stage: 'script' })]);
     } catch {
-      setMessages((m) => [...m, makeErrorAction('保存剧本失败。', '重试保存', '点击重新保存所选方向')]);
+      setMessages((m) => [...m, makeErrorAction('保存剧本失败。', '重试保存', '点击重新保存所选方向', 'script')]);
     } finally {
       busyRef.current = false;
     }
