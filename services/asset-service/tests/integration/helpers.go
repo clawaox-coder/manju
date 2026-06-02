@@ -187,6 +187,9 @@ func setupHarness(t *testing.T) *harness {
 		r.With(assetmw.RequireWriteRole).Patch("/assets/{type}/{id}", h.Patch)
 		r.With(assetmw.RequireWriteRole).Delete("/assets/{type}/{id}", h.Delete)
 		r.With(assetmw.RequireWriteRole).Post("/upload/sign", h.SignUpload)
+		// 与 cmd/server/main.go 保持一致(集成测试 router 为手工复制)
+		r.With(assetmw.RequireWriteRole).Post("/projects/{pid}/assets", h.LinkProjectAsset)
+		r.Get("/projects/{pid}/assets", h.ListProjectAssets)
 	})
 
 	srv := httptest.NewServer(r)
