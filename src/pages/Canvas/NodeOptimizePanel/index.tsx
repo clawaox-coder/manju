@@ -19,6 +19,11 @@ const PANEL_WIDTH = 320;
 // 由 tldraw editor 派生节点旁的屏幕坐标。用 useValue 订阅 reactive store,
 // 不在 effect 里 setState(避免 react-hooks/set-state-in-effect)。
 // pageToScreen 返屏幕坐标,容器用 fixed 定位直接消费。
+//
+// canvas-node-edit-layout reactive 契约:selector 内调 getShapePageBounds(shapeId)
+// 与 getViewportScreenBounds(),tldraw useValue 会自动订阅其内部读到的所有 reactive
+// 值(shape store、camera、viewport)。因此节点被用户拖动 / 缩放、画布平移 / 缩放,
+// 都会触发本 hook 重算,面板自动跟随。回归契约由 src/test/panelAnchor.test.ts 把关。
 function useAnchorPosition(nodeId: string): { x: number; y: number } | null {
   const editor = useEditor();
   return useValue(
