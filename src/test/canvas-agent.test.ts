@@ -43,14 +43,6 @@ describe('AgentStateMachine（阶段追踪器）', () => {
     expect(sm.state.step).toBe('rendering');
   });
 
-  it('focusNode 记录/清空聚焦目标', () => {
-    const sm = new AgentStateMachine();
-    sm.focusNode('shot-2');
-    expect(sm.state.focusedNodeId).toBe('shot-2');
-    sm.focusNode(null);
-    expect(sm.state.focusedNodeId).toBeNull();
-  });
-
   // ---- restore：按已有产物恢复阶段 ----
 
   it('空项目恢复到 idea', () => {

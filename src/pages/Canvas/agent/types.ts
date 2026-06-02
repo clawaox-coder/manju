@@ -17,12 +17,12 @@ export interface IdeaContext {
   theme?: string;
 }
 
-// 阶段追踪器的状态：只剩 stage/step、累积的创意设定、当前聚焦节点。
+// 阶段追踪器的状态：只剩 stage/step、累积的创意设定。
+// 节点聚焦改由 NodeOptimizePanel(canvas-node-optimize-panel)接管,不再走状态机。
 export interface AgentState {
   stage: Stage;
   step: Step;
   ideaContext: IdeaContext;
-  focusedNodeId: string | null;
 }
 
 export type MessageType = 'text' | 'thinking' | 'options' | 'card-group' | 'preview' | 'progress' | 'action' | 'context-switch' | 'milestone';

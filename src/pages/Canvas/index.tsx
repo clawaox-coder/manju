@@ -534,14 +534,11 @@ function CanvasInner() {
     }
   }, [projectId, sm, runScriptGen, runStoryboardGen, runVoiceMatch, runRender]);
 
-  // 点选画布节点 → 开单节点优化面板（P2 阶段并存：仍保留原 focus turn，P5 移除）。
+  // 点选画布节点 → 开单节点优化面板（canvas-node-optimize-panel）。
+  // 原本同时注入全局对话 focus turn，本次 P5 已移除——节点优化与全局对话彻底隔离。
   const handleNodeClick = useCallback((nodeId: string) => {
     setSelectedNodeId(nodeId);
-    sm.focusNode(nodeId);
-    syncState();
-    setMessages((m) => [...m, makeSystemMessage(`📍 聚焦：${nodeId}`)]);
-    void runAgentTurn(`我想聊聊画布上的「${nodeId}」这个节点。`);
-  }, [sm, syncState, runAgentTurn]);
+  }, []);
 
   // 聊天框拖拽/粘贴/选择参考图 → 暂存并打开上传弹窗（角色资产，自动落画布）。
   const handleAttachImage = useCallback((file: File) => {
