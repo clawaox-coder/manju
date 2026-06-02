@@ -139,6 +139,23 @@ const assetColumns = `id, team_id, type, name, description, tags, file_url, thum
 	bg_style, avatar, duration_ms, uses_count, created_by, metadata,
 	created_at, updated_at, deleted_at`
 
+// assetColumnList 是 assetColumns 的列名切片, 供 join 查询加表别名前缀用.
+var assetColumnList = []string{
+	"id", "team_id", "type", "name", "description", "tags", "file_url", "thumbnail_url",
+	"bg_style", "avatar", "duration_ms", "uses_count", "created_by", "metadata",
+	"created_at", "updated_at", "deleted_at",
+}
+
+// prefixedAssetColumns 给每个 asset 列加表别名前缀 (如 "a.id, a.team_id, ...").
+// 用于 project_assets JOIN assets 时避免列名歧义, scan 顺序与 scanAsset 一致.
+func prefixedAssetColumns(alias string) string {
+	cols := make([]string, len(assetColumnList))
+	for i, c := range assetColumnList {
+		cols[i] = alias + "." + c
+	}
+	return strings.Join(cols, ", ")
+}
+
 func scanAsset(row pgx.Row, a *Asset) error {
 	return row.Scan(
 		&a.ID, &a.TeamID, &a.Type, &a.Name, &a.Description, &a.Tags,

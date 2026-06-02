@@ -200,6 +200,8 @@ export interface ChatTurn {
 export interface ChatContext {
   has_script?: boolean;
   has_shots?: boolean;
+  has_voice?: boolean;
+  has_video?: boolean;
   idea?: Record<string, string>;
 }
 

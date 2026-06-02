@@ -6,24 +6,23 @@ import { Sparkles, FolderOpen, ArrowLeft } from 'lucide-react';
 import { ChatPanel } from './chat/ChatPanel';
 import { CanvasToolbar } from './CanvasToolbar';
 import { AssetLibraryPanel } from './AssetLibraryPanel';
+import { UploadDialog } from '@/components/domain/UploadDialog';
+import { linkProjectAsset, type AssetDTO } from '@/lib/api/assets';
 import { AccountMenu } from '@/components/layout/AccountMenu';
 import { AgentStateMachine } from './agent/AgentStateMachine';
-import { AgentIntentRouter } from './agent/AgentIntentRouter';
-import { getAgentMessage, makeUserMessage } from './agent/AgentMessages';
-import type { ChatMessage } from './agent/types';
+import { makeUserMessage, makeAiMessage, makeProgressMessage, makeErrorAction, makeSystemMessage, makeCardGroupMessage, makeMilestoneMessage } from './agent/AgentMessages';
+import type { ChatMessage, Stage } from './agent/types';
 import { useStore } from '@/store';
 import { useEffectiveTheme } from '@/hooks/useTheme';
 import { useScript, useShots, useUpdateScript } from '@/hooks/useScriptApi';
 import { useAssets } from '@/hooks/useAssetApi';
 import { useProjects, useUpdateProject } from '@/hooks/useProjectApi';
-import { voiceMatch, streamScriptContinue, storyboardGenerate, getAiTask, chat, generateTitle } from '@/lib/api/ai';
+import { voiceMatch, streamScriptContinue, storyboardGenerate, getAiTask, chat, generateTitle, type ChatTrigger } from '@/lib/api/ai';
 import { createRender, getRender } from '@/lib/api/render';
 import { buildCanvasGraph } from './buildGraph';
+import { ManjuNodeUtil, MANJU_NODE_SIZE, type ManjuNodeType, type ManjuNodeProps } from './canvas/ManjuNodeUtil';
 
-type Role = 'ai' | 'system';
-function msg(role: Role, text: string): ChatMessage {
-  return { id: `msg-${role}-${Date.now()}-${Math.round(Math.random() * 1e6)}`, role, type: 'text', text, timestamp: Date.now() };
-}
+const MANJU_SHAPE_UTILS = [ManjuNodeUtil];
 
 const RENDER_TERMINAL = ['done', 'failed', 'cancelled'];
 const RENDER_POLL_MS = 2000;
@@ -55,12 +54,28 @@ const STAGE_LABELS = {
   video: '出成片',
 } as const;
 
+// 每个 stage 只允许它对应的那一个制作动作（与后端 CHAT_SYSTEM 的白名单一致）。
+// video 阶段不允许任何 trigger。前端据此对 LLM 返回的 trigger 做越权校验。
+const STAGE_ALLOWED_ACTION: Record<Stage, ChatTrigger['action'] | null> = {
+  idea: 'generate_script',
+  script: 'generate_storyboard',
+  storyboard: 'match_voice',
+  voice: 'render_video',
+  video: null,
+};
+
 async function genOutline(projectId: string, instruction: string): Promise<string> {
   let full = '';
   for await (const evt of streamScriptContinue({ project_id: projectId, context: '', instruction })) {
     if (evt.event === 'delta') full += (evt.data as { text?: string }).text ?? '';
+    else if (evt.event === 'error') {
+      // 后端以 error 事件（而非 HTTP 错误）上报失败，需主动抛出，否则会静默返回空串。
+      throw new Error((evt.data as { message?: string }).message || 'AI 生成失败');
+    }
   }
-  return full.trim();
+  const text = full.trim();
+  if (!text) throw new Error('AI 未返回内容'); // 空结果按失败处理，触发重试而非渲染空卡
+  return text;
 }
 
 async function pollAiTask(taskId: string): Promise<boolean> {
@@ -88,7 +103,42 @@ interface CanvasGraphNode {
     style?: string;
     duration?: string;
     status?: string;
+    label?: string;
+    model?: string;
+    avatar?: string;
+    sceneNumber?: number;
+    shotNumber?: number;
+    imageUrl?: string;
   };
+}
+
+interface CanvasGraphEdge {
+  id: string;
+  source: string;
+  target: string;
+}
+
+// 把 buildGraph 的 node.data 按 type 映射成 manjuNode 的扁平 props。
+function toManjuProps(node: CanvasGraphNode): ManjuNodeProps {
+  const d = node.data ?? {};
+  const nodeType = (['script', 'storyboard', 'character', 'ai', 'video'].includes(node.type ?? '')
+    ? node.type : 'script') as ManjuNodeType;
+  const size = MANJU_NODE_SIZE[nodeType];
+  const base = { ...size, nodeType, title: d.title ?? node.id, body: '', badge: '', imageUrl: '', status: '' };
+  switch (nodeType) {
+    case 'script':
+      return { ...base, badge: d.sceneNumber ? String(d.sceneNumber) : '', body: d.content ?? '' };
+    case 'storyboard':
+      return { ...base, badge: d.style ?? '', body: d.dialog ?? '', imageUrl: d.imageUrl ?? '' };
+    case 'character':
+      return { ...base, title: d.name ?? d.title ?? '角色', body: d.description ?? '', imageUrl: d.avatar ?? '' };
+    case 'ai':
+      return { ...base, title: d.label ?? d.title ?? 'AI', badge: d.model ?? '', status: d.status ?? 'idle' };
+    case 'video':
+      return { ...base, badge: d.duration ?? '', body: '等待素材', status: d.status ?? 'waiting' };
+    default:
+      return base;
+  }
 }
 
 function stripShapePrefix(shapeId: string): string {
@@ -96,16 +146,17 @@ function stripShapePrefix(shapeId: string): string {
 }
 
 
-// Sync graph nodes to tldraw shapes
+// 把 graph 同步成 tldraw 自定义 manjuNode + bound arrow 连线（只读镜子）。
 function CanvasSync({
   graph,
   onNodeSelect,
 }: {
-  graph: { nodes: CanvasGraphNode[] };
+  graph: { nodes: CanvasGraphNode[]; edges: CanvasGraphEdge[] };
   onNodeSelect?: (nodeId: string) => void;
 }) {
   const editor = useEditor();
   const syncedRef = useRef(new Set<string>());
+  const syncedEdgesRef = useRef(new Set<string>());
   const selectedShapeIds = useValue('selectedShapeIds', () => editor.getSelectedShapeIds().map((id) => String(id)), [editor]);
   const lastSelectedRef = useRef<string | null>(null);
   const effectiveTheme = useEffectiveTheme();
@@ -120,52 +171,58 @@ function CanvasSync({
   useEffect(() => {
     if (!editor || !graph.nodes.length) return;
     const existing = syncedRef.current;
-    const currentIds = new Set(graph.nodes.map(n => n.id));
+    const currentIds = new Set(graph.nodes.map((n) => n.id));
 
-    // Remove shapes that no longer exist
-    const toRemove = [...existing].filter(id => !currentIds.has(id));
-    if (toRemove.length) {
-      editor.deleteShapes(toRemove.map(id => createShapeId(id)));
-    }
+    // 所有写操作包在 run(ignoreShapeLock) 里：节点 isLocked 挡用户拖动，但代码可摆位
+    // （P4.1 spike 结论）。StrictMode 双调时已存在的节点走 update 分支，幂等。
+    editor.run(() => {
+      // 删掉不再存在的节点（其相连 arrow 由 tldraw 随绑定一并清理）。
+      const toRemove = [...existing].filter((id) => !currentIds.has(id));
+      if (toRemove.length) {
+        editor.deleteShapes(toRemove.map((id) => createShapeId(id)));
+      }
 
-    // Create/update shapes
-    for (const node of graph.nodes) {
-      const shapeId = createShapeId(node.id);
-      const label = node.data?.title || node.id;
-      const nextX = node.position?.x ?? Math.random() * 800;
-      const nextY = node.position?.y ?? Math.random() * 600;
-      if (!existing.has(node.id)) {
-        editor.createShape({
-          id: shapeId,
-          type: 'note',
-          x: nextX,
-          y: nextY,
-          props: { text: label, size: 'm' },
-        } as unknown as Parameters<typeof editor.createShape>[0]);
-      } else {
-        const shape = editor.getShape(shapeId);
-        const currentText = typeof shape?.props === 'object' && shape?.props && 'text' in shape.props
-          ? String(shape.props.text ?? '')
-          : '';
-        const shapeX = typeof shape?.x === 'number' ? shape.x : undefined;
-        const shapeY = typeof shape?.y === 'number' ? shape.y : undefined;
-        if (currentText !== label || shapeX !== nextX || shapeY !== nextY) {
+      for (const node of graph.nodes) {
+        const shapeId = createShapeId(node.id);
+        const props = toManjuProps(node);
+        const x = node.position?.x ?? 0;
+        const y = node.position?.y ?? 0;
+        if (!existing.has(node.id)) {
+          editor.createShape({
+            id: shapeId, type: 'manjuNode', x, y, isLocked: true, props,
+          } as unknown as Parameters<typeof editor.createShape>[0]);
+        } else {
           editor.updateShape({
-            id: shapeId,
-            type: 'note',
-            x: nextX,
-            y: nextY,
-            props: { text: label, size: 'm' },
+            id: shapeId, type: 'manjuNode', x, y, props,
           } as unknown as Parameters<typeof editor.updateShape>[0]);
         }
       }
-    }
+
+      // 连线：为每条 edge 建一条两端 bound 到源/目标节点的 arrow（只建一次）。
+      for (const edge of graph.edges) {
+        if (syncedEdgesRef.current.has(edge.id)) continue;
+        if (!currentIds.has(edge.source) || !currentIds.has(edge.target)) continue;
+        const arrowId = createShapeId(`arrow-${edge.id}`);
+        editor.createShape({ id: arrowId, type: 'arrow', x: 0, y: 0 } as unknown as Parameters<typeof editor.createShape>[0]);
+        editor.createBindings([
+          { fromId: arrowId, toId: createShapeId(edge.source), type: 'arrow',
+            props: { terminal: 'start', normalizedAnchor: { x: 0.5, y: 0.5 }, isExact: false, isPrecise: false } },
+          { fromId: arrowId, toId: createShapeId(edge.target), type: 'arrow',
+            props: { terminal: 'end', normalizedAnchor: { x: 0.5, y: 0.5 }, isExact: false, isPrecise: false } },
+        ] as unknown as Parameters<typeof editor.createBindings>[0]);
+        editor.updateShape({ id: arrowId, isLocked: true, type: 'arrow' } as unknown as Parameters<typeof editor.updateShape>[0]);
+        syncedEdgesRef.current.add(edge.id);
+      }
+    }, { ignoreShapeLock: true });
+
     syncedRef.current = currentIds;
-  }, [editor, graph.nodes]);
+  }, [editor, graph.nodes, graph.edges]);
 
   useEffect(() => {
     if (!selectedShapeIds.length || !onNodeSelect) return;
     const nodeId = stripShapePrefix(selectedShapeIds[0]);
+    // 只对 manjuNode 节点触发聚焦（忽略 arrow 等）。
+    if (nodeId.startsWith('arrow-')) return;
     if (lastSelectedRef.current === nodeId) return;
     lastSelectedRef.current = nodeId;
     onNodeSelect(nodeId);
@@ -186,26 +243,27 @@ function CanvasInner() {
   const { data: characters } = useAssets({ type: 'character' });
   const updateScript = useUpdateScript(projectId ?? '');
   const updateProject = useUpdateProject();
-  // Agent state machine (stable singleton instances)
+  // 阶段追踪器（稳定单例）——只追踪 stage/step 与创意设定，不生产对话文案。
   const [sm] = useState(() => new AgentStateMachine());
-  const [router] = useState(() => new AgentIntentRouter(sm));
   const [agentState, setAgentState] = useState(sm.state);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const messagesRef = useRef<ChatMessage[]>([]);
   useEffect(() => { messagesRef.current = messages; }, [messages]);
-  // Once the conversation has started (user typed, picked an option, or an idea
-  // was carried in from the showcase), the init effect must stop re-seeding the
-  // greeting on late data loads — otherwise it wipes the live conversation.
+  // 会话一旦开始（用户说话、或从 showcase 带入灵感），init effect 就不再重置问候，
+  // 否则会在数据延迟加载时冲掉正在进行的对话。
   const conversationStartedRef = useRef(false);
   const ideaKickedRef = useRef(false);
   // 标题只在第一句用户消息后生成一次。
   const titleGenStartedRef = useRef(false);
   const [loading, setLoading] = useState(false);
-  const [selection, setSelection] = useState<{ selectedId: string } | null>(null);
   const [assetPanelOpen, setAssetPanelOpen] = useState(false);
+  // 从聊天框拖拽/粘贴/选择的参考图：暂存待上传，打开上传弹窗。
+  const [pendingImage, setPendingImage] = useState<File | null>(null);
   const editorRef = useRef<ReturnType<typeof useEditor> | null>(null);
-  const [scriptCandidates, setScriptCandidates] = useState<{ title: string; content: string }[]>([]);
-  const [selectedScript, setSelectedScript] = useState<string>('');
+  // 防止同一制作动作并发触发（trigger 可能在连续两轮里重复出现）。
+  const busyRef = useRef(false);
+  // 剧本候选内容缓存：cardId → 大纲全文（点选卡片后据此保存所选方向）。
+  const scriptCandidatesRef = useRef<Map<string, string>>(new Map());
   const syncState = useCallback(() => setAgentState({ ...sm.state }), [sm]);
   // Auto-select first project
   useEffect(() => {
@@ -216,147 +274,169 @@ function CanvasInner() {
     }
   }, [projectId, projects, setProjectId, setProjectName]);
 
-  // Initialize: restore from data or greeting
+  // 初始化：依据项目已有数据恢复阶段；首条问候交由 chat() 在 idea 阶段产生，
+  // 这里只在「有产物」时落一条进度态恢复提示，空项目则发一条欢迎语 turn。
   useEffect(() => {
     if (!projectId) return;
     if (conversationStartedRef.current) return;
+    conversationStartedRef.current = true;
     const hasScript = !!script?.content;
     const hasShots = (shots?.length ?? 0) > 0;
-    if (hasScript || hasShots) {
-      sm.restore({ hasScript, hasShots, hasVoice: false, hasVideo: false });
-    } else {
-      sm.advance();
-    }
+    sm.restore({ hasScript, hasShots, hasVoice: false, hasVideo: false });
     syncState();
-    const initMsg = getAgentMessage(sm.state, {
-      projectName,
-      scriptScenes: script?.content?.split(/^#{1,3}\s/m).length ?? 0,
-      shotCount: shots?.length ?? 0,
-    });
-    setMessages([initMsg]);
-  }, [projectId, script, shots, projectName, syncState, sm]);
+    setMessages([
+      makeAiMessage('嗨，我是你的创作搭档。想做个什么样的短片？随便聊聊就行——一句灵感、一个画面，都可以。', { stage: 'idea' }),
+    ]);
+  }, [projectId, script, shots, syncState, sm]);
 
-  // Auto-advance storyboard/complete → voice offer
-  useEffect(() => {
-    if (agentState.stage === 'storyboard' && agentState.step === 'complete') {
-      sm.proceedToVoice();
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      syncState();
-      setMessages((m) => [...m, getAgentMessage(sm.state, { shotCount: shots?.length ?? 0 })]);
-    }
-  }, [agentState.stage, agentState.step, sm, syncState, shots]);
+  // ---- 制作动作：由对话 trigger 显式触发，不再由状态机 step 监听自动跑。 ----
+  // 每个都自带忙碌守卫，跑完用 markReady 落进度态 + 一条结果消息。
 
-  // Generate 3 real script-outline candidates (parallel) from the idea context
-  const scriptGenStartedRef = useRef(false);
-  useEffect(() => {
-    if (agentState.stage !== 'script' || agentState.step !== 'generate' || !projectId) return;
-    if (scriptGenStartedRef.current) return;
-    scriptGenStartedRef.current = true;
-    let cancelled = false;
-    (async () => {
+  // 剧本：用累积的创意设定并行生成 3 个方向的候选，以「对话内卡片组」呈现，
+  // 等用户点选某个方向（handleSelectCard）再保存进剧本、推进到分镜。
+  const runScriptGen = useCallback(async () => {
+    if (!projectId || busyRef.current) return;
+    busyRef.current = true;
+    sm.enterBusy('script'); syncState();
+    setMessages((m) => [...m, makeProgressMessage('正在构思 3 个剧本方向...', '生成剧本', 'script')]);
+    try {
       const { type = '漫剧', style = '日系动漫', tone, duration = '1分钟', audience = '年轻人' } = sm.state.ideaContext;
       const base = `用${type}形式、${style}风格创作一个短剧大纲（约${duration}，受众${audience}${tone ? `，${tone}基调` : ''}）。直接给出分场景大纲。`;
       const dirs = [
-        { title: '强冲突反转', extra: '走强冲突、结尾反转路线。' },
-        { title: '轻松日常', extra: '走轻松幽默的日常喜剧路线。' },
-        { title: '细腻情感', extra: '走细腻情感、人物弧光路线。' },
+        { emoji: '⚡', title: '强冲突反转', extra: '走强冲突、结尾反转路线。' },
+        { emoji: '☀️', title: '轻松日常', extra: '走轻松幽默的日常喜剧路线。' },
+        { emoji: '🌙', title: '细腻情感', extra: '走细腻情感、人物弧光路线。' },
       ];
-      try {
-        const outlines = await Promise.all(dirs.map((d) => genOutline(projectId, base + d.extra)));
-        if (cancelled) return;
-        setScriptCandidates(outlines.map((c, i) => ({ title: dirs[i].title, content: c || '（生成为空）' })));
-        sm.showScriptOptions();
-        syncState();
-      } catch {
-        if (cancelled) return;
-        setMessages((m) => [...m, { id: `msg-sgerr-${Date.now()}`, role: 'ai' as const, type: 'action' as const, text: '生成剧本时出错了。', action: { label: '重试生成', description: '点击重新生成剧本方向', icon: '↻' }, timestamp: Date.now() }]);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [agentState.stage, agentState.step, projectId, sm, syncState]);
-
-  useEffect(() => {
-    if (!(agentState.stage === 'script' && agentState.step === 'generate')) {
-      scriptGenStartedRef.current = false;
+      const outlines = await Promise.all(dirs.map((d) => genOutline(projectId, base + d.extra)));
+      const cards = dirs.map((d, i) => ({
+        id: `script-cand-${i}`,
+        emoji: d.emoji,
+        title: d.title,
+        description: outlines[i] || '（生成为空）',
+      }));
+      // 缓存内容供点选时取用。
+      scriptCandidatesRef.current = new Map(cards.map((c) => [c.id, c.description]));
+      sm.markReady('script'); syncState();
+      setMessages((m) => [...m, makeCardGroupMessage('给你三个方向，点一个我就照着展开成完整剧本：', cards, 'script')]);
+    } catch {
+      sm.markReady('idea'); syncState();
+      setMessages((m) => [...m, makeErrorAction('生成剧本时出错了。', '重试生成', '点击重新生成剧本', 'idea')]);
+    } finally {
+      busyRef.current = false;
     }
-  }, [agentState.stage, agentState.step]);
+  }, [projectId, sm, syncState]);
 
-  // Run the real storyboard generation on entering storyboard
-  const storyboardGenStartedRef = useRef(false);
-  useEffect(() => {
-    if (agentState.stage !== 'storyboard' || agentState.step !== 'generate_scene' || !projectId) return;
-    if (storyboardGenStartedRef.current) return;
-    storyboardGenStartedRef.current = true;
-    let cancelled = false;
-    (async () => {
-      try {
-        const style = sm.state.ideaContext.style ?? 'default';
-        const res = await storyboardGenerate({ project_id: projectId, style, regenerate_all: true });
-        const ok = await pollAiTask(res.task_id);
-        if (cancelled) return;
-        if (!ok) throw new Error('storyboard task failed');
-        await refetchShots();
-        sm.completeStoryboard();
-        syncState();
-      } catch {
-        if (cancelled) return;
-        setMessages((m) => [...m, { id: `msg-sberr-${Date.now()}`, role: 'ai' as const, type: 'action' as const, text: '生成分镜时出错了。', action: { label: '重试生成', description: '点击重新生成分镜', icon: '↻' }, timestamp: Date.now() }]);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [agentState.stage, agentState.step, projectId, sm, syncState, refetchShots]);
-
-  useEffect(() => {
-    if (!(agentState.stage === 'storyboard' && agentState.step === 'generate_scene')) {
-      storyboardGenStartedRef.current = false;
+  const runStoryboardGen = useCallback(async () => {
+    if (!projectId || busyRef.current) return;
+    busyRef.current = true;
+    sm.enterBusy('storyboard'); syncState();
+    setMessages((m) => [...m, makeProgressMessage('🎨 正在生成分镜...', '生成分镜', 'storyboard')]);
+    try {
+      const style = sm.state.ideaContext.style ?? 'default';
+      const res = await storyboardGenerate({ project_id: projectId, style, regenerate_all: true });
+      const ok = await pollAiTask(res.task_id);
+      if (!ok) throw new Error('storyboard task failed');
+      await refetchShots();
+      sm.markReady('storyboard'); syncState();
+      setMessages((m) => [...m, makeMilestoneMessage('分镜已生成', 'storyboard'), makeAiMessage('每一镜都在画布右侧了，要改某一镜，或者直接去配音。', { stage: 'storyboard' })]);
+    } catch {
+      sm.markReady('script'); syncState();
+      setMessages((m) => [...m, makeErrorAction('生成分镜时出错了。', '重试生成', '点击重新生成分镜', 'script')]);
+    } finally {
+      busyRef.current = false;
     }
-  }, [agentState.stage, agentState.step]);
+  }, [projectId, sm, syncState, refetchShots]);
 
-  // Run one agent turn for the free-form idea stage. The backend LLM agent
-  // analyzes the conversation, returns a natural reply + dynamically-generated
-  // quick-reply options, extracts idea settings, and may trigger script gen.
-  const runIdeaAgentTurn = useCallback(async (pendingUserText?: string) => {
+  const runVoiceMatch = useCallback(async () => {
+    if (!projectId || busyRef.current) return;
+    busyRef.current = true;
+    sm.enterBusy('voice'); syncState();
+    setMessages((m) => [...m, makeProgressMessage('🎙 正在为角色匹配配音...', '配音匹配', 'voice')]);
+    try {
+      const res = await voiceMatch({ project_id: projectId, content: script?.content ?? '', auto_assign: true });
+      const n = res.matches?.length ?? 0;
+      sm.markReady('voice'); syncState();
+      setMessages((m) => [...m, makeMilestoneMessage(`配音完成 · ${n} 个角色`, 'voice'), makeAiMessage('想换某个角色的声音，还是直接出片？', { stage: 'voice' })]);
+    } catch {
+      sm.markReady('storyboard'); syncState();
+      setMessages((m) => [...m, makeErrorAction('配音匹配失败。', '重试配音', '点击重新匹配', 'storyboard')]);
+    } finally {
+      busyRef.current = false;
+    }
+  }, [projectId, sm, syncState, script]);
+
+  const runRender = useCallback(async () => {
+    if (!projectId || busyRef.current) return;
+    busyRef.current = true;
+    sm.enterBusy('video'); syncState();
+    setMessages((m) => [...m, makeProgressMessage('🎬 正在渲染视频...', '渲染中', 'video')]);
+    try {
+      const job = await createRender(
+        { project_id: projectId, resolution: '1080p', format: 'mp4' },
+        `render-${projectId}-${Date.now()}`,
+      );
+      const result = await pollRender(job.job_id, () => {
+        setMessages((m) => [...m, makeAiMessage('比预期久一点，还在渲染中...', { stage: 'video' })]);
+      });
+      if (!result.ok) throw new Error('render failed');
+      sm.markReady('video'); syncState();
+      setMessages((m) => [...m, makeMilestoneMessage('视频已出片', 'video'), makeAiMessage('右上角可以预览或下载。想调哪段，点画布节点告诉我。', { stage: 'video' })]);
+    } catch {
+      sm.markReady('voice'); syncState();
+      setMessages((m) => [...m, makeErrorAction('渲染遇到问题。', '重试渲染', '点击重新生成视频', 'voice')]);
+    } finally {
+      busyRef.current = false;
+    }
+  }, [projectId, sm, syncState]);
+
+  // trigger 越权校验：只执行「当前 stage 允许的那一个 action」，非法忽略。
+  const executeTrigger = useCallback((trigger: ChatTrigger | null) => {
+    if (!trigger) return;
+    const allowed = STAGE_ALLOWED_ACTION[sm.state.stage];
+    if (trigger.action !== allowed) return; // 越权 / video 阶段 → 忽略
+    switch (trigger.action) {
+      case 'generate_script': void runScriptGen(); break;
+      case 'generate_storyboard': void runStoryboardGen(); break;
+      case 'match_voice': void runVoiceMatch(); break;
+      case 'render_video': void runRender(); break;
+    }
+  }, [sm, runScriptGen, runStoryboardGen, runVoiceMatch, runRender]);
+
+  // 统一的对话一轮：全程任意 stage 都走这条 chat() 路径。后端依 stage 给出
+  // 自然回应 + 动态 options + 可能的 trigger；前端 merge 设定、落消息、校验 trigger。
+  const runAgentTurn = useCallback(async (pendingUserText?: string) => {
+    if (!projectId) return;
     setLoading(true);
     try {
       const history = messagesRef.current
         .filter((m) => m.role === 'user' || m.role === 'ai')
         .map((m) => ({ role: (m.role === 'ai' ? 'assistant' : 'user') as 'user' | 'assistant', content: m.text }))
         .filter((t) => t.content.trim());
-      // The just-sent turn isn't in messagesRef yet (ref updates post-render),
-      // so append it explicitly to keep the agent's history complete.
+      // 刚发出的这轮还没进 messagesRef（ref 在渲染后才更新），显式补上保证历史完整。
       if (pendingUserText?.trim()) {
         history.push({ role: 'user', content: pendingUserText.trim() });
       }
       const res = await chat({
         project_id: projectId,
-        stage: 'idea',
+        stage: sm.state.stage,
         messages: history,
         context: {
           has_script: !!script?.content,
           has_shots: (shots?.length ?? 0) > 0,
+          has_voice: false,
+          has_video: false,
           idea: sm.state.ideaContext as Record<string, string>,
         },
       });
       sm.mergeIdeaContext(res.extracted);
-      setMessages((m) => [...m, {
-        id: `msg-ai-${Date.now()}`,
-        role: 'ai' as const,
-        type: 'text' as const,
-        text: res.reply,
-        thinking: res.thinking || undefined,
-        options: res.options?.length ? res.options : undefined,
-        timestamp: Date.now(),
-      }]);
-      if (res.trigger?.action === 'generate_script') {
-        sm.beginScriptGen();
-        syncState();
-      }
+      setMessages((m) => [...m, makeAiMessage(res.reply, { thinking: res.thinking, options: res.options, stage: sm.state.stage })]);
+      executeTrigger(res.trigger);
     } catch {
-      setMessages((m) => [...m, { id: `msg-err-${Date.now()}`, role: 'ai' as const, type: 'text' as const, text: '网络出了点问题，请再试一次。', timestamp: Date.now() }]);
+      setMessages((m) => [...m, makeAiMessage('网络出了点问题，请再试一次。', { stage: sm.state.stage })]);
     } finally {
       setLoading(false);
     }
-  }, [projectId, script, shots, sm, syncState]);
+  }, [projectId, script, shots, sm, executeTrigger]);
 
   // 用户第一句话后，调 LLM 生成一个简短标题并存为项目名。只跑一次。
   // 若用户已经手动改过名字（非空且非默认占位），不覆盖。
@@ -387,173 +467,95 @@ function CanvasInner() {
     void updateProject.mutateAsync({ id: projectId, input: { name: clean } });
   }, [projectId, projectName, setProjectName, updateProject]);
 
-  // Idea carried in from the showcase: seed it as the first user turn and let
-  // the agent respond, instead of showing the generic greeting. Runs once.
+  // 从 showcase 带入的灵感：作为第一句用户消息喂给 agent，而非通用问候。只跑一次。
   useEffect(() => {
     const idea = (location.state as { idea?: string } | null)?.idea?.trim();
     if (!idea || ideaKickedRef.current || !projectId) return;
     if (sm.state.stage !== 'idea') return;
     ideaKickedRef.current = true;
     conversationStartedRef.current = true;
-    // Clear the nav state so a refresh doesn't replay the idea.
+    // 清掉 nav state，刷新不再重放灵感。
     window.history.replaceState({}, '');
-    // Defer state updates out of the effect's synchronous phase.
     queueMicrotask(() => {
       setMessages([makeUserMessage(idea)]);
       void maybeGenerateTitle(idea);
-      void runIdeaAgentTurn(idea);
+      void runAgentTurn(idea);
     });
-  }, [location.state, projectId, sm, runIdeaAgentTurn, maybeGenerateTitle]);
+  }, [location.state, projectId, sm, runAgentTurn, maybeGenerateTitle]);
 
-  // Handle option selection
+  // 快捷回复点选 = 一次用户 turn，喂回统一对话。
   const handleSelectOption = useCallback((value: string) => {
-    if (sm.state.step === 'editing') {
-      if (value === 'exit_focus') {
-        sm.exitFocus();
-        syncState();
-        setMessages((m) => [...m, { id: `msg-exit-${Date.now()}`, role: 'system' as const, type: 'context-switch' as const, text: '↩ 返回主线', timestamp: Date.now() }]);
-        return;
-      }
-      sm.applyEditAction(value as 'change_style' | 'edit_content' | 'regenerate');
-      syncState();
-      const ack: Record<string, string> = {
-        change_style: '好，告诉我想要的新风格，我来重新生成。',
-        edit_content: '好，说说要怎么改，我来调整。',
-        regenerate: '正在重新生成这个节点...',
-      };
-      setMessages((m) => [...m, makeUserMessage(value), { id: `msg-edit-${Date.now()}`, role: 'ai' as const, type: 'text' as const, text: ack[value] ?? '好的。', timestamp: Date.now() }]);
-      return;
-    }
-    // Idea stage: a quick-reply pick is just a user turn fed back to the agent.
-    if (sm.state.stage === 'idea') {
-      setMessages((m) => [...m, makeUserMessage(value)]);
-      void runIdeaAgentTurn(value);
-      return;
-    }
-    sm.selectOption(value);
-    syncState();
-    setMessages((m) => [...m, makeUserMessage(value), getAgentMessage(sm.state)]);
-  }, [syncState, sm, runIdeaAgentTurn]);
+    setMessages((m) => [...m, makeUserMessage(value)]);
+    void runAgentTurn(value);
+  }, [runAgentTurn]);
 
-  // Handle free-form input
+  // 点选剧本候选卡：取出该方向全文 → 保存进剧本 → 停在 script/ready，
+  // 引导用户继续聊改或进分镜（进分镜由对话 trigger 触发）。
+  const handleSelectCard = useCallback(async (cardId: string) => {
+    if (!projectId || busyRef.current) return;
+    const content = scriptCandidatesRef.current.get(cardId);
+    if (!content) return;
+    busyRef.current = true;
+    setMessages((m) => [...m, makeUserMessage('就用这个方向')]);
+    try {
+      await updateScript.mutateAsync({ content, expected_version_no: script?.version_no ?? 0 });
+      scriptCandidatesRef.current.clear();
+      sm.markReady('script'); syncState();
+      setMessages((m) => [...m, makeMilestoneMessage('剧本已定', 'script'), makeAiMessage('画布上能看到完整剧本了。想再调哪段，或者直接说"开始分镜"。', { stage: 'script' })]);
+    } catch {
+      setMessages((m) => [...m, makeErrorAction('保存剧本失败。', '重试保存', '点击重新保存所选方向', 'script')]);
+    } finally {
+      busyRef.current = false;
+    }
+  }, [projectId, sm, syncState, updateScript, script]);
+
+  // 自由输入：全程统一走 runAgentTurn（idea 阶段顺带生成标题）。
   const handleSendMessage = useCallback(async (text: string) => {
     setMessages((m) => [...m, makeUserMessage(text)]);
-    // Idea stage is fully agent-driven (natural conversation + dynamic options).
     if (sm.state.stage === 'idea') {
-      // 首句话后顺带生成标题（幂等，内部自己守一次）。
-      void maybeGenerateTitle(text);
-      await runIdeaAgentTurn(text);
-      return;
+      void maybeGenerateTitle(text); // 首句话后顺带生成标题（幂等）
     }
-    // Later stages: classify intent and route through the deterministic flow.
-    setLoading(true);
-    try {
-      const result = await router.processInput(text);
-      syncState();
-      if (result.handled) {
-        setMessages((m) => [...m, getAgentMessage(sm.state)]);
-      } else if (result.fallbackMessage) {
-        setMessages((m) => [...m, { id: `msg-fb-${Date.now()}`, role: 'ai' as const, type: 'text' as const, text: result.fallbackMessage!, timestamp: Date.now() }]);
-      }
-    } catch {
-      setMessages((m) => [...m, { id: `msg-err-${Date.now()}`, role: 'ai' as const, type: 'text' as const, text: '网络出了点问题，请再试一次。', timestamp: Date.now() }]);
-    } finally {
-      setLoading(false);
+    await runAgentTurn(text);
+  }, [sm, runAgentTurn, maybeGenerateTitle]);
+
+  // 动作消息（目前只剩「重试」类）：按当前 stage 重新触发对应制作。
+  const handleAction = useCallback(() => {
+    if (!projectId || busyRef.current) return;
+    switch (sm.state.stage) {
+      case 'idea':
+      case 'script': void runScriptGen(); break;
+      case 'storyboard': void runStoryboardGen(); break;
+      case 'voice': void runVoiceMatch(); break;
+      case 'video': void runRender(); break;
     }
-  }, [syncState, sm, router, runIdeaAgentTurn, maybeGenerateTitle]);
+  }, [projectId, sm, runScriptGen, runStoryboardGen, runVoiceMatch, runRender]);
 
-  // Handle action (script confirm / voice / video one-click)
-  const handleAction = useCallback(async (action: string) => {
-    if (!projectId || loading) return;
-
-    if (sm.state.stage === 'script' && sm.state.step === 'expand') {
-      setMessages((m) => [...m, makeUserMessage(action)]);
-      setLoading(true);
-      try {
-        await updateScript.mutateAsync({ content: selectedScript, expected_version_no: script?.version_no ?? 0 });
-        sm.confirm();
-        syncState();
-        setMessages((m) => [...m, msg('ai', '✅ 剧本已保存，开始生成分镜...'), getAgentMessage(sm.state)]);
-      } catch {
-        setMessages((m) => [...m, { id: `msg-saverr-${Date.now()}`, role: 'ai' as const, type: 'action' as const, text: '保存剧本失败。', action: { label: '重试保存', description: '点击重新保存', icon: '↻' }, timestamp: Date.now() }]);
-      } finally {
-        setLoading(false);
-      }
-      return;
-    }
-
-    if (sm.state.stage === 'voice') {
-      sm.startVoiceMatch();
-      syncState();
-      setMessages((m) => [...m, makeUserMessage(action), getAgentMessage(sm.state)]);
-      setLoading(true);
-      try {
-        const res = await voiceMatch({ project_id: projectId, content: script?.content ?? '', auto_assign: true });
-        sm.completeVoice();
-        syncState();
-        const n = res.matches?.length ?? 0;
-        setMessages((m) => [...m, msg('ai', `✅ 已为 ${n} 个角色匹配配音。`), getAgentMessage(sm.state)]);
-      } catch {
-        setMessages((m) => [...m, { id: `msg-verr-${Date.now()}`, role: 'ai' as const, type: 'action' as const, text: '配音匹配失败。', action: { label: '重试配音', description: '点击重新匹配', icon: '↻' }, timestamp: Date.now() }]);
-      } finally {
-        setLoading(false);
-      }
-      return;
-    }
-
-    if (sm.state.stage === 'video') {
-      sm.startRender();
-      syncState();
-      setMessages((m) => [...m, makeUserMessage(action), getAgentMessage(sm.state)]);
-      setLoading(true);
-      try {
-        const job = await createRender(
-          { project_id: projectId, resolution: '1080p', format: 'mp4' },
-          `render-${projectId}-${Date.now()}`,
-        );
-        const result = await pollRender(job.job_id, () => {
-          setMessages((m) => [...m, msg('ai', '比预期久一点，还在渲染中...')]);
-        });
-        if (result.ok) {
-          sm.completeRender();
-          syncState();
-          setMessages((m) => [...m, getAgentMessage(sm.state)]);
-        } else {
-          throw new Error('render failed');
-        }
-      } catch {
-        setMessages((m) => [...m, { id: `msg-rerr-${Date.now()}`, role: 'ai' as const, type: 'action' as const, text: '渲染遇到问题。', action: { label: '重试渲染', description: '点击重新生成视频', icon: '↻' }, timestamp: Date.now() }]);
-      } finally {
-        setLoading(false);
-      }
-      return;
-    }
-  }, [projectId, loading, script, sm, syncState, updateScript, selectedScript]);
-
-  // Handle node click (simplified for tldraw - used for script candidate selection)
+  // 点选画布节点 → 记录聚焦目标，并发起一轮带 focus 上下文的对话（不再写死台词）。
   const handleNodeClick = useCallback((nodeId: string) => {
-    const isCandidate = nodeId.startsWith('candidate-');
-    const inSelectionStep = sm.state.stage === 'script' && sm.state.step === 'show_options';
-
-    if (isCandidate) {
-      if (!inSelectionStep || selection) return;
-      const idx = parseInt(nodeId.match(/(\d+)$/)?.[1] ?? '0', 10);
-      const chosen = scriptCandidates[idx]?.content ?? '';
-      setSelection({ selectedId: nodeId });
-      window.setTimeout(() => {
-        setSelectedScript(chosen);
-        sm.selectCard(nodeId);
-        syncState();
-        setSelection(null);
-        setMessages((m) => [...m, getAgentMessage(sm.state, { scriptPreview: chosen })]);
-      }, 500);
-      return;
-    }
-
     sm.focusNode(nodeId);
     syncState();
-    setMessages((m) => [...m, getAgentMessage(sm.state, { focusedNodeLabel: nodeId })]);
-  }, [sm, syncState, selection, scriptCandidates]);
+    setMessages((m) => [...m, makeSystemMessage(`📍 聚焦：${nodeId}`)]);
+    void runAgentTurn(`我想聊聊画布上的「${nodeId}」这个节点。`);
+  }, [sm, syncState, runAgentTurn]);
+
+  // 聊天框拖拽/粘贴/选择参考图 → 暂存并打开上传弹窗（角色资产，自动落画布）。
+  const handleAttachImage = useCallback((file: File) => {
+    setPendingImage(file);
+  }, []);
+
+  // 参考图上传成功 → 资产已创建，再把它以 character_ref 关联到当前项目
+  // （这样生成时后端能按 project 拉到它喂模型）。react-query 失效 ['assets']
+  // 自动刷新角色节点落画布；关联失败不阻断，仅提示。
+  const handleImageUploaded = useCallback((asset: AssetDTO) => {
+    setPendingImage(null);
+    if (projectId) {
+      void linkProjectAsset(projectId, asset.id, 'character_ref')
+        .then(() => setMessages((m) => [...m, makeSystemMessage(`🖼 参考图「${asset.name}」已加入，画布上能看到了`)]))
+        .catch(() => setMessages((m) => [...m, makeSystemMessage(`🖼 参考图「${asset.name}」已上传，但关联到项目失败，生成时可能用不上`)]));
+    } else {
+      setMessages((m) => [...m, makeSystemMessage(`🖼 参考图「${asset.name}」已上传`)]);
+    }
+  }, [projectId]);
 
   // Pick an asset from the library → drop a note for it at the viewport center.
   const handleAssetPick = useCallback((assetId: string, name: string) => {
@@ -572,7 +574,7 @@ function CanvasInner() {
 
   // Build graph
   const graph = useMemo(
-    () => buildCanvasGraph(script, shots, characters?.data, projectName, 'idle', undefined, projectId, undefined),
+    () => buildCanvasGraph(script, shots, characters?.data, projectName, 'idle', undefined, projectId),
     [script, shots, characters?.data, projectName, projectId],
   );
   const suggestedPrompts = useMemo(() => {
@@ -597,12 +599,14 @@ function CanvasInner() {
         messages={messages}
         onSendMessage={handleSendMessage}
         onSelectOption={handleSelectOption}
+        onSelectCard={handleSelectCard}
         onAction={handleAction}
         loading={loading}
         stage={STAGE_LABELS[agentState.stage]}
         suggestedPrompts={suggestedPrompts}
         title={projectName}
         onTitleChange={handleTitleChange}
+        onAttachImage={handleAttachImage}
       />
       <div className="flex-1 relative">
         <div className="absolute top-4 left-4 z-[300] flex items-center gap-3">
@@ -630,7 +634,7 @@ function CanvasInner() {
           <FolderOpen className="w-4 h-4 text-primary" />
           资产库
         </button>
-        <Tldraw hideUi onMount={(editor) => { editorRef.current = editor; }}>
+        <Tldraw hideUi shapeUtils={MANJU_SHAPE_UTILS} onMount={(editor) => { editorRef.current = editor; }}>
           <CanvasSync graph={graph} onNodeSelect={handleNodeClick} />
           <CanvasToolbar />
         </Tldraw>
@@ -638,6 +642,16 @@ function CanvasInner() {
           open={assetPanelOpen}
           onClose={() => setAssetPanelOpen(false)}
           onPick={handleAssetPick}
+        />
+        <UploadDialog
+          key={pendingImage ? `${pendingImage.name}-${pendingImage.size}` : 'none'}
+          open={pendingImage !== null}
+          onOpenChange={(next) => { if (!next) setPendingImage(null); }}
+          assetType="character"
+          accept="image/*"
+          title="添加参考图（角色）"
+          initialFile={pendingImage}
+          onUploaded={handleImageUploaded}
         />
       </div>
     </div>

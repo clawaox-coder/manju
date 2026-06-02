@@ -6,7 +6,12 @@ class Settings(BaseSettings):
     env: str = "local"
     http_port: int = 8005
     jwt_public_key_path: str = "/run/secrets/jwt-public.pem"
+    # 私钥用于签发 service-to-service token(后台任务调 asset-service 取参考图)。
+    # 留空表示无 S2S 能力(取图会降级)。dev 专用,生产环境不应下放私钥(见 design)。
+    jwt_private_key_path: str = ""
     jwt_issuer: str = "manju-auth"
+    # asset-service 内网地址(取项目参考图)。
+    asset_service_url: str = "http://localhost:8004"
     database_url: str = "postgres://manju_app:manju_app@localhost:5432/manju?sslmode=disable"
     anthropic_api_key: str = "sk-placeholder"
     # OAuth 风格 token + 自定义 endpoint. 用于复用 Claude Code / 中转网关凭据.

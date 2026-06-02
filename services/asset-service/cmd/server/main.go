@@ -140,6 +140,10 @@ func main() {
 
 		// 上传预签
 		r.With(assetmw.RequireWriteRole).Post("/upload/sign", h.SignUpload)
+
+		// /v1/projects/{pid}/assets — 项目 ↔ 资产关联 (role 区分用途)
+		r.With(assetmw.RequireWriteRole).Post("/projects/{pid}/assets", h.LinkProjectAsset)
+		r.Get("/projects/{pid}/assets", h.ListProjectAssets)
 	})
 
 	srv := &http.Server{

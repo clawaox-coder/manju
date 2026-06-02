@@ -4,7 +4,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { useSignUpload, useCreateAsset } from '@/hooks/useAssetApi';
-import type { AssetType } from '@/lib/api/assets';
+import type { AssetType, AssetDTO } from '@/lib/api/assets';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -14,12 +14,17 @@ interface Props {
   assetType: AssetType;
   accept?: string;
   title?: string;
+  /** 打开时预填的文件（如从聊天框拖拽/粘贴进来的图片）。 */
+  initialFile?: File | null;
+  /** 资产创建成功后回调，便于上层提示「已落画布」等。 */
+  onUploaded?: (asset: AssetDTO) => void;
 }
 
 type Stage = 'idle' | 'signing' | 'uploading' | 'creating' | 'done';
 
-export function UploadDialog({ open, onOpenChange, assetType, accept, title }: Props) {
-  const [file, setFile] = useState<File | null>(null);
+export function UploadDialog({ open, onOpenChange, assetType, accept, title, initialFile, onUploaded }: Props) {
+  // 用 initialFile 初始化（上层用 key 在新文件时重挂，避免 effect 内同步 setState）。
+  const [file, setFile] = useState<File | null>(initialFile ?? null);
   const [stage, setStage] = useState<Stage>('idle');
   const [progress, setProgress] = useState(0);
   const [dragOver, setDragOver] = useState(false);
@@ -60,13 +65,14 @@ export function UploadDialog({ open, onOpenChange, assetType, accept, title }: P
       await uploadWithProgress(sign.upload_url, sign.method, sign.headers, file);
 
       setStage('creating');
-      await createAsset.mutateAsync({
+      const asset = await createAsset.mutateAsync({
         type: assetType,
         name: file.name.replace(/\.[^.]+$/, ''),
         file_url: sign.file_url,
       });
 
       setStage('done');
+      onUploaded?.(asset);
       toast.success('上传成功');
       setTimeout(() => handleClose(false), 1000);
     } catch (err) {

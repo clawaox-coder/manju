@@ -70,6 +70,82 @@ async def _anthropic_once(prompt: str, system: str, max_tokens: int = 2000) -> t
     return text, msg.usage.input_tokens, msg.usage.output_tokens
 
 
+# ---- 多模态调用 (文本 + 参考图) ----
+
+# spike 教训 + 防超限: 限制图片数量与单图大小, 过小/损坏图跳过.
+MAX_REF_IMAGES = 4
+MAX_IMAGE_BYTES = 4 * 1024 * 1024  # 单图 4MB 上限
+MIN_IMAGE_BYTES = 128              # 过小(退化)图上游会 400, 跳过
+
+
+async def _anthropic_once_multimodal(
+    prompt: str, system: str, images: list[dict], max_tokens: int = 2000,
+) -> tuple[str, int, int]:
+    """带参考图的调用. images: [{"media_type": "image/png", "data": <base64>}].
+    images 为空时等价于纯文本(但调用方一般直接走 _anthropic_once)。"""
+    client = _client()
+    s = get_settings()
+    content: list[dict] = [
+        {"type": "image", "source": {"type": "base64", "media_type": im["media_type"], "data": im["data"]}}
+        for im in images
+    ]
+    content.append({"type": "text", "text": prompt})
+    msg = await client.messages.create(
+        model=s.anthropic_model,
+        max_tokens=max_tokens,
+        system=system,
+        messages=[{"role": "user", "content": content}],
+    )
+    text = "".join(block.text for block in msg.content if block.type == "text")
+    return text, msg.usage.input_tokens, msg.usage.output_tokens
+
+
+async def _fetch_project_reference_images(project_id: str, team_id: str, role: str = "character_ref") -> list[dict]:
+    """取项目参考图喂模型用. 用 S2S token 调 asset-service 列资产 → 下载 → 校验 → base64.
+    任何失败都返回空列表(调用方据此降级为纯文本), 不抛异常 — 参考图不应搞挂主流程。
+    返回 [{"media_type": ..., "data": <base64>}], 最多 MAX_REF_IMAGES 张。"""
+    import base64
+    from .. import internal_token
+
+    if not internal_token.has_s2s():
+        logger.warning("S2S token 不可用, 跳过参考图(降级纯文本)")
+        return []
+    s = get_settings()
+    out: list[dict] = []
+    try:
+        token = internal_token.mint_s2s_token(team_id)
+        async with httpx.AsyncClient(timeout=10) as c:
+            # 按 project_id + role 精确取关联资产(走 project_assets 接口)
+            resp = await c.get(
+                f"{s.asset_service_url}/v1/projects/{project_id}/assets",
+                params={"role": role},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            resp.raise_for_status()
+            assets = resp.json().get("data", [])
+            for a in assets[:MAX_REF_IMAGES]:
+                url = a.get("file_url") or a.get("thumbnail_url")
+                if not url:
+                    continue
+                try:
+                    img = await c.get(url)
+                    img.raise_for_status()
+                    raw = img.content
+                    if not (MIN_IMAGE_BYTES <= len(raw) <= MAX_IMAGE_BYTES):
+                        logger.warning(f"参考图大小越界({len(raw)}B), 跳过: {a.get('id')}")
+                        continue
+                    media = img.headers.get("content-type", "image/png").split(";")[0]
+                    if not media.startswith("image/"):
+                        media = "image/png"
+                    out.append({"media_type": media, "data": base64.standard_b64encode(raw).decode()})
+                except Exception as e:  # 单图下载失败不影响其他
+                    logger.warning(f"参考图下载失败, 跳过 {a.get('id')}: {e}")
+    except Exception as e:
+        logger.warning(f"取项目参考图失败(降级纯文本): {e}")
+        return []
+    return out
+
+
 def _strip_trailing_commas(s: str) -> str:
     """删掉结构性尾逗号 (',' 紧跟 '}' 或 ']'). 仅在严格 loads 失败后调用,
     所以合法 JSON (含字符串里的 ',]') 不会走到这, 不必担心误伤字符串内容."""
@@ -325,19 +401,28 @@ async def storyboard_generate_async(
     from uuid import UUID as _UUID
     s = get_settings()
 
+    # 取项目角色参考图(失败/无图均返回空 → 降级纯文本, 不阻断)
+    ref_images = await _fetch_project_reference_images(project_id, team_id, role="character_ref")
+
     prompt = (
         f"项目 ID: {project_id}\n"
         f"风格: {style}\n"
         f"regenerate_all: {regenerate_all}\n"
         f"shot_ids: {shot_ids or '(无)'}\n\n"
-        "请生成 3-6 个分镜。"
+        + ("已提供角色参考图, 生成分镜时请保持角色外观与参考图一致。\n\n" if ref_images else "")
+        + "请生成 3-6 个分镜。"
     )
 
     start = time.monotonic()
     try:
-        text, in_tok, out_tok = await _anthropic_once(
-            prompt, STORYBOARD_SYSTEM, max_tokens=6000
-        )
+        if ref_images:
+            text, in_tok, out_tok = await _anthropic_once_multimodal(
+                prompt, STORYBOARD_SYSTEM, ref_images, max_tokens=6000
+            )
+        else:
+            text, in_tok, out_tok = await _anthropic_once(
+                prompt, STORYBOARD_SYSTEM, max_tokens=6000
+            )
         try:
             parsed = _parse_json_loose(text)
         except json.JSONDecodeError as e:
@@ -488,12 +573,20 @@ async def voice_match(
 
 CHAT_SYSTEM = """你是「漫剧AI」的创作搭档 Agent，陪用户从一个想法一步步做出短片。
 
-你的工作方式：分析用户最新一句话 + 对话历史 + 当前项目状态，决定这一轮怎么回应。
-你不是填表机器人。不要机械地一个个问「类型?风格?时长?受众?」。像一个有经验的导演搭档那样自然地聊，
-在聊的过程中把需要的信息（题材/风格/时长/受众/情绪基调）顺势抽取出来。
+你的工作方式：分析用户最新一句话 + 对话历史 + 当前项目状态 + 当前阶段，决定这一轮怎么回应。
+你不是填表机器人。不要机械地一个个盘问。像一个有经验的导演搭档那样自然地聊，
+在聊的过程中把需要的信息顺势抽取出来。全程保持同一种口吻：自然、口语，
+不要在某些阶段突然变成「点下一步」式的向导。
 
 创作管线分 5 个阶段：idea(找方向) → script(剧本) → storyboard(分镜) → voice(配音) → video(成片)。
-你负责 idea 阶段的自由对话，以及在用户表达「可以了/开始吧」时触发下一步制作动作。
+你要根据「当前阶段」调整聊天重点，并在用户表达推进意图时触发「当前阶段对应」的制作动作。
+
+各阶段聊什么：
+- idea：顺势聊出题材/风格/时长/受众/情绪基调，不要逐项盘问。
+- script：聊剧情走向、冲突、节奏、开场抓人，回应用户对方向的偏好与修改。
+- storyboard：聊镜头切分、景别、画面风格、单镜时长松紧。
+- voice：聊角色音色、旁白语气、配音节奏。
+- video：聊整体节奏、转场、片尾停顿，以及成片导出。
 
 每一轮你必须输出严格的 JSON（不要任何额外解释、不要 markdown 代码块包裹）：
 {
@@ -514,11 +607,16 @@ extracted 规则：
 - 只填你从「整个对话」里确信的字段，没提到的字段不要瞎填，留空或省略。
 - 这是累积的项目设定，前端会合并保存。
 
-trigger 规则（什么时候推进到下一步）：
-- 大多数时候是 null（继续对话）。
-- 当 idea 阶段信息够了（至少有题材方向）且用户表达「开始/可以了/生成吧/就这样」，
-  输出 {"action": "generate_script", "params": {}} 来触发剧本生成。
-- 不要催。信息不够就继续自然地聊，把缺的顺出来。"""
+trigger 规则（什么时候推进到下一步 / 触发制作动作）：
+- 大多数时候是 null（继续对话）。只在用户明确表达推进意图（「开始/可以了/生成吧/就这样/下一步」）
+  且当前阶段信息已足够时，才输出 trigger。不要催，也不要自作主张替用户推进。
+- 关键约束：每个阶段「只允许」它对应的那一个 action，绝不能跨阶段触发：
+    · stage=idea       → 只允许 {"action": "generate_script"}（且至少已有题材方向）
+    · stage=script     → 只允许 {"action": "generate_storyboard"}（且用户已认可某个剧本方向）
+    · stage=storyboard → 只允许 {"action": "match_voice"}（且分镜已就绪）
+    · stage=voice      → 只允许 {"action": "render_video"}（且配音已完成）
+    · stage=video      → 不允许任何 trigger，始终为 null（已是最后一步，聊调整即可）
+- action 形如 {"action": "generate_storyboard", "params": {}}。拿不准就给 null，让对话继续。"""
 
 
 async def chat_respond(
@@ -542,7 +640,9 @@ async def chat_respond(
     prompt = (
         f"当前阶段: {stage}\n"
         f"项目状态: 已有剧本={context.get('has_script', False)}, "
-        f"已有分镜={context.get('has_shots', False)}\n"
+        f"已有分镜={context.get('has_shots', False)}, "
+        f"已配音={context.get('has_voice', False)}, "
+        f"已出片={context.get('has_video', False)}\n"
         f"已收集的创意设定: {json.dumps(context.get('idea', {}), ensure_ascii=False)}\n\n"
         f"对话历史:\n{convo}\n\n"
         f"请按系统提示输出这一轮的 JSON 响应。"

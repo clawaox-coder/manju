@@ -1,8 +1,6 @@
-import type { Decision } from './agent/types';
 import type { CanvasEdge, CanvasNode } from './buildGraph';
 
 const STORAGE_PREFIX = 'manju.canvas.';
-const DECISIONS_KEY_PREFIX = 'manju.canvas.decisions.';
 
 interface CanvasState {
   nodes: CanvasNode[];
@@ -43,18 +41,4 @@ export function loadCanvasEdges(projectId: string): CanvasEdge[] | null {
   } catch {
     return null;
   }
-}
-
-export function saveDecisions(projectId: string, decisions: Decision[]): void {
-  localStorage.setItem(`${DECISIONS_KEY_PREFIX}${projectId}`, JSON.stringify(decisions));
-}
-
-export function loadDecisions(projectId: string): Decision[] {
-  const raw = localStorage.getItem(`${DECISIONS_KEY_PREFIX}${projectId}`);
-  if (!raw) return [];
-  try { return JSON.parse(raw); } catch { return []; }
-}
-
-export function clearDecisions(projectId: string): void {
-  localStorage.removeItem(`${DECISIONS_KEY_PREFIX}${projectId}`);
 }
