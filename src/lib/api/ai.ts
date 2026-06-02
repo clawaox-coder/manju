@@ -332,6 +332,18 @@ export async function optimizeCharacter(input: OptimizeCharacterInput): Promise<
   return aiPost<OptimizeCharacterResult>('/v1/ai/character/optimize', input);
 }
 
+// 节点优化端点的错误类型。携带 status + code 以便上层区分 409 VERSION_CONFLICT 等。
+export class AiOptimizeError extends Error {
+  status: number;
+  code?: string;
+  constructor(status: number, message: string, code?: string) {
+    super(message);
+    this.name = 'AiOptimizeError';
+    this.status = status;
+    this.code = code;
+  }
+}
+
 // ai-gateway 节点优化端点返回裸 JSON(无 { data } 信封)，错误体为 { detail: { code, message } }。
 // 与 chat()/generateTitle() 同一裸 fetch 写法，刻意不经 request()(那会剥 .data)。
 async function aiPost<T>(path: string, body: unknown): Promise<T> {
@@ -343,8 +355,8 @@ async function aiPost<T>(path: string, body: unknown): Promise<T> {
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    const detail = (err as { detail?: { message?: string } })?.detail;
-    throw new Error(detail?.message || `请求失败: ${res.status}`);
+    const detail = (err as { detail?: { code?: string; message?: string } })?.detail;
+    throw new AiOptimizeError(res.status, detail?.message || `请求失败: ${res.status}`, detail?.code);
   }
   return res.json() as Promise<T>;
 }

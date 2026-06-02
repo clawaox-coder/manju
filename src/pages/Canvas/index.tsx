@@ -646,6 +646,7 @@ function CanvasInner() {
             <NodeOptimizePanel
               key={selectedNodeId}
               nodeId={selectedNodeId}
+              projectId={projectId}
               onClose={() => setSelectedNodeId(null)}
             />
           )}
