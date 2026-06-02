@@ -917,43 +917,106 @@ async def rewrite_scene(
     return {"content": new_content, "version_no": new_version}
 
 
+async def _generate_and_save_image(
+    *, team_id: str, user_id: str, project_id: str, prompt: str, size: str, purpose: str, filename: str,
+) -> str:
+    """图像生成 + 上传共享流程:配额 check → 拉参考图 → 生图 → 上传 → 消耗配额。
+
+    canvas-image-generation Decision 3+4+6:
+    - check_and_reserve 在生图前(失败的真生图前就拒)
+    - failures(上游/上传)不调 consume(失败不计配额)
+    - consume 仅在落地写回前调用,确保配额账实匹配
+    """
+    from ..repo import image_quota
+    from . import image as image_svc
+
+    month = image_quota.current_month_yymm()
+    try:
+        await image_quota.check_and_reserve(team_id=team_id, user_id=user_id, month_yymm=month)
+    except image_quota.QuotaExceeded as e:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "code": "IMAGE_QUOTA_EXCEEDED",
+                "message": f"本月图像额度已用完({e.used}/{e.limit}),下月恢复",
+            },
+        )
+
+    refs = await _fetch_project_reference_images(project_id, team_id, role="character_ref")
+    img_bytes = await image_svc.generate_image(prompt=prompt, size=size, reference_images=refs)
+    file_url = await image_svc.upload_to_asset_service(
+        team_id=team_id, content=img_bytes, content_type="image/png",
+        purpose=purpose, filename=filename,
+    )
+    await image_quota.consume(team_id=team_id, user_id=user_id, month_yymm=month)
+    return file_url
+
+
 async def optimize_shot(
     *, team_id: str, user_id: str, project_id: str, shot_id: str,
     instruction: str, ref_image_url: str | None, mode: str,
 ) -> dict:
-    """单镜优化:mode=text 改对白。image/both 需图像模型 → 501(二期)。"""
+    """单镜优化:
+    - mode=text → LLM 改对白
+    - mode=image → gpt-image-1 重画这一镜(配额 + 参考图)
+    - mode=both → 先 text 后 image,**两者独立**:任一失败已成功部分保留,失败 raise 该步错误
+    """
     from ..repo import shots as shots_repo
 
     if mode not in ("text", "image", "both"):
         raise HTTPException(status_code=400, detail={"code": "INVALID_INPUT", "message": "mode 必须是 text|image|both"})
-    if mode in ("image", "both"):
-        raise HTTPException(
-            status_code=501,
-            detail={"code": "NOT_IMPLEMENTED", "message": "重画这一镜需图像模型,二期支持;当前仅支持 mode=text"},
-        )
 
     shot = await shots_repo.get_shot(team_id=team_id, user_id=user_id, shot_id=shot_id)
     if shot is None:
         raise HTTPException(status_code=404, detail={"code": "SHOT_NOT_FOUND", "message": "分镜不存在"})
-    prompt = (
-        f"这一镜标题: {shot.get('title') or '(无)'}\n"
-        f"当前对白: {shot.get('dialog') or '(无)'}\n\n"
-        f"---\n优化指令: {instruction}\n\n只输出这一镜修改后的对白。"
-    )
-    result, _ = await _run_and_record(
-        team_id=team_id, user_id=user_id, project_id=project_id,
-        task_type="shot.optimize", system=SHOT_DIALOG_SYSTEM,
-        prompt=prompt, max_tokens=800, parse_json=False,
-    )
-    new_dialog = _text_of(result)
-    saved = await shots_repo.update_shot_dialog(team_id=team_id, user_id=user_id, shot_id=shot_id, dialog=new_dialog)
-    return {"shot_id": shot_id, "dialog": saved, "image_url": shot.get("image_url")}
+
+    new_dialog = shot.get("dialog")
+    new_image_url = shot.get("image_url")
+
+    if mode in ("text", "both"):
+        prompt_text = (
+            f"这一镜标题: {shot.get('title') or '(无)'}\n"
+            f"当前对白: {shot.get('dialog') or '(无)'}\n\n"
+            f"---\n优化指令: {instruction}\n\n只输出这一镜修改后的对白。"
+        )
+        result, _ = await _run_and_record(
+            team_id=team_id, user_id=user_id, project_id=project_id,
+            task_type="shot.optimize", system=SHOT_DIALOG_SYSTEM,
+            prompt=prompt_text, max_tokens=800, parse_json=False,
+        )
+        new_dialog = _text_of(result)
+        await shots_repo.update_shot_dialog(
+            team_id=team_id, user_id=user_id, shot_id=shot_id, dialog=new_dialog,
+        )
+
+    if mode in ("image", "both"):
+        img_prompt = (
+            f"为漫剧分镜生成画面。\n"
+            f"镜头标题: {shot.get('title') or '(无)'}\n"
+            f"镜头对白: {new_dialog or '(无)'}\n"
+            f"画面要求: {instruction}\n"
+            f"风格: 漫剧 / 动漫"
+        )
+        new_image_url = await _generate_and_save_image(
+            team_id=team_id, user_id=user_id, project_id=project_id,
+            prompt=img_prompt, size="1792x1024",
+            purpose="shot-image", filename=f"shot-{shot_id}.png",
+        )
+        await shots_repo.update_shot_image(
+            team_id=team_id, user_id=user_id, shot_id=shot_id, image_url=new_image_url,
+        )
+
+    return {"shot_id": shot_id, "dialog": new_dialog, "image_url": new_image_url}
 
 
 async def optimize_character(
-    *, team_id: str, user_id: str, project_id: str, asset_id: str, instruction: str,
+    *, team_id: str, user_id: str, project_id: str, asset_id: str,
+    instruction: str, generate_avatar: bool = False,
 ) -> dict:
-    """单角色优化:LLM 改写该角色设定/描述 → 写回该资产。"""
+    """单角色优化:
+    - generate_avatar=False(默认)→ LLM 改写设定 / 描述
+    - generate_avatar=True → gpt-image-1 生成头像(1024x1024),覆盖 assets.file_url
+    """
     from ..repo import assets as assets_repo
 
     asset = await assets_repo.get_character_asset(team_id=team_id, user_id=user_id, asset_id=asset_id)
@@ -961,6 +1024,28 @@ async def optimize_character(
         raise HTTPException(status_code=404, detail={"code": "ASSET_NOT_FOUND", "message": "角色资产不存在"})
     if asset.get("type") != "character":
         raise HTTPException(status_code=400, detail={"code": "INVALID_INPUT", "message": "该资产不是角色"})
+
+    if generate_avatar:
+        img_prompt = (
+            f"为漫剧角色生成头像。\n"
+            f"角色名: {asset.get('name')}\n"
+            f"角色设定: {asset.get('description') or '(无)'}\n"
+            f"画面要求: {instruction}\n"
+            f"风格: 漫剧 / 动漫,头像构图,正方画幅"
+        )
+        file_url = await _generate_and_save_image(
+            team_id=team_id, user_id=user_id, project_id=project_id,
+            prompt=img_prompt, size="1024x1024",
+            purpose="character-avatar", filename=f"char-{asset_id}.png",
+        )
+        saved = await assets_repo.update_asset_file_url(
+            team_id=team_id, user_id=user_id, asset_id=asset_id, file_url=file_url,
+        )
+        if saved is None:
+            raise HTTPException(status_code=404, detail={"code": "ASSET_NOT_FOUND", "message": "角色资产不存在或已删除"})
+        return {"asset_id": asset_id, "description": asset.get("description"), "file_url": file_url}
+
+    # 默认:改 description(沿用现有行为)
     prompt = (
         f"角色名: {asset.get('name')}\n"
         f"当前设定/描述: {asset.get('description') or '(无)'}\n\n"
@@ -977,4 +1062,4 @@ async def optimize_character(
     )
     if not saved:
         raise HTTPException(status_code=404, detail={"code": "ASSET_NOT_FOUND", "message": "角色资产不存在或已删除"})
-    return {"asset_id": asset_id, "description": new_desc}
+    return {"asset_id": asset_id, "description": new_desc, "file_url": asset.get("file_url")}

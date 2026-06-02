@@ -32,13 +32,10 @@ def _stub_llm(monkeypatch, text: str = "新内容"):
 
 # ---- shot/optimize ----
 
+@pytest.mark.skip(reason="canvas-image-generation 已反转 501 → 真生成;happy path 断言由 P5.2 的 test_image_optimize.py 接管")
 async def test_shot_image_mode_501(monkeypatch):
-    with pytest.raises(HTTPException) as e:
-        await ai_svc.optimize_shot(
-            team_id=TEAM, user_id=USER, project_id="p", shot_id="s",
-            instruction="x", ref_image_url=None, mode="image",
-        )
-    assert e.value.status_code == 501
+    """历史断言:image mode 返 501。本 change 已撤销该行为。"""
+    pass
 
 
 async def test_shot_bad_mode_400(monkeypatch):

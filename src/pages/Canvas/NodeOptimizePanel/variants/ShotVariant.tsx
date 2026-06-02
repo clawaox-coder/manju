@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { Send, Clock, Loader2 } from 'lucide-react';
+import { Send, Clock, Loader2, ImagePlus } from 'lucide-react';
 import { useShots, useUpdateShot, useOptimizeShot } from '@/hooks/useScriptApi';
+import { AiOptimizeError } from '@/lib/api/ai';
 import { cn } from '@/lib/utils';
 
 interface Props {
@@ -14,6 +15,7 @@ export function ShotVariant({ projectId, shotId }: Props) {
   const optimize = useOptimizeShot(projectId);
   const update = useUpdateShot(projectId);
   const [dialogInstruction, setDialogInstruction] = useState('');
+  const [imageInstruction, setImageInstruction] = useState('');
   // 外部 → 本地编辑值用 override 模式:null 时显示外部值,用户改动时持有覆盖,
   // 保存成功后置 null 让显示回归外部值。避免 effect 内 setState。
   const [durationOverride, setDurationOverride] = useState<string | null>(null);
@@ -25,6 +27,15 @@ export function ShotVariant({ projectId, shotId }: Props) {
 
   useEffect(() => { dialogInputRef.current?.focus(); }, []);
 
+  // 统一错误 toast:canvas-image-generation IMAGE_QUOTA_EXCEEDED 单独提示"下月恢复"。
+  const toastError = (e: unknown, fallback: string) => {
+    if (e instanceof AiOptimizeError && e.code === 'IMAGE_QUOTA_EXCEEDED') {
+      toast.error(e.message || '本月图像额度已用完,下月恢复');
+    } else {
+      toast.error((e as Error).message || fallback);
+    }
+  };
+
   const submitDialog = async () => {
     const text = dialogInstruction.trim();
     if (!text || optimize.isPending || !shot) return;
@@ -33,7 +44,20 @@ export function ShotVariant({ projectId, shotId }: Props) {
       setDialogInstruction('');
       toast.success('已改对白');
     } catch (e) {
-      toast.error((e as Error).message || '改对白失败');
+      toastError(e, '改对白失败');
+    }
+  };
+
+  // canvas-image-generation:重画这一镜(gpt-image-1 + 项目 character_ref 自动注入)。
+  const submitImage = async () => {
+    if (optimize.isPending || !shot) return;
+    const hint = imageInstruction.trim() || '保持当前画面风格,贴合对白';
+    try {
+      await optimize.mutateAsync({ shot_id: shotId, instruction: hint, mode: 'image' });
+      setImageInstruction('');
+      toast.success('已重画这一镜');
+    } catch (e) {
+      toastError(e, '重画失败');
     }
   };
 
@@ -153,11 +177,40 @@ export function ShotVariant({ projectId, shotId }: Props) {
         </div>
       </div>
 
-      {/* 重画(后端无图像模型,二期)*/}
+      {/* 重画这一镜(canvas-image-generation:gpt-image-1)*/}
       <div className="px-3.5 py-3">
-        <p className="text-[11px] text-muted-foreground italic">
-          重画这一镜:即将上线(需图像模型,二期)
-        </p>
+        <div className="text-[11px] font-medium text-muted-foreground mb-1.5">重画这一镜</div>
+        <div className={cn(
+          'flex items-center gap-2 rounded-xl border bg-card px-3 py-2 transition mb-2',
+          'border-border focus-within:border-primary/40',
+        )}>
+          <input
+            type="text"
+            className="flex-1 bg-transparent text-[13px] outline-none placeholder:text-muted-foreground disabled:opacity-60"
+            placeholder="画面描述(可选)…"
+            value={imageInstruction}
+            onChange={(e) => setImageInstruction(e.target.value)}
+            disabled={optimize.isPending || !shot}
+          />
+        </div>
+        <button
+          type="button"
+          onClick={submitImage}
+          disabled={optimize.isPending || !shot}
+          className="w-full flex items-center justify-center gap-2 h-8 rounded-lg bg-primary text-primary-foreground text-[12px] font-medium disabled:opacity-50 transition"
+        >
+          {optimize.isPending ? (
+            <>
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              AI 正在重画…
+            </>
+          ) : (
+            <>
+              <ImagePlus className="w-3.5 h-3.5" />
+              重画
+            </>
+          )}
+        </button>
       </div>
     </div>
   );

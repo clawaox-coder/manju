@@ -418,6 +418,8 @@ class CharacterOptimizeRequest(BaseModel):
     project_id: str
     asset_id: str
     instruction: str = Field(min_length=1)
+    # canvas-image-generation:true → 生成头像(覆盖 file_url);false → 改 description
+    generate_avatar: bool = False
 
 
 @router.post("/character/optimize")
@@ -429,4 +431,5 @@ async def character_optimize(
     return await ai_svc.optimize_character(
         team_id=auth.team_id, user_id=auth.user_id,
         project_id=body.project_id, asset_id=body.asset_id, instruction=body.instruction,
+        generate_avatar=body.generate_avatar,
     )

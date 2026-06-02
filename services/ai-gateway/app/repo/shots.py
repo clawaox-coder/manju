@@ -98,3 +98,15 @@ async def update_shot_dialog(*, team_id: str, user_id: str, shot_id: str, dialog
             sid,
         )
     return row["dialog"] if row else None
+
+
+async def update_shot_image(*, team_id: str, user_id: str, shot_id: str, image_url: str) -> str | None:
+    """canvas-image-generation:写回新生成图的 URL 到 shots.image_url(覆盖旧值)。"""
+    sid = uuidlib.UUID(shot_id)
+    async with team_ctx(team_id, user_id) as conn:
+        row = await conn.fetchrow(
+            "UPDATE shots SET image_url = $1 WHERE id = $2 RETURNING image_url",
+            image_url,
+            sid,
+        )
+    return row["image_url"] if row else None

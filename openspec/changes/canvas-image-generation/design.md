@@ -69,6 +69,15 @@ CREATE TABLE ai_image_quota (
 5. 写回 `shots.image_url` 或 `assets.file_url`
 **风险**:asset-service 的 sign_upload 当前主要给前端调,后端走可能没专门 codepath。先 spike 一遍——若 S2S token + 后端 PUT 不通,降级方案是在 asset-service 加一个 internal-only `POST /v1/internal/upload/from-bytes` 端点专给 service-to-service。**spike 是本 change 实施第一步**。
 
+**Spike 结论(P1 实施时静态评估,本地无 docker 跑真请求)**:S2S 路径**确认可走**,无需 fallback。证据:
+- `mint_s2s_token` claims 含 `team_id` 与 `role: 'owner'`(`services/ai-gateway/app/internal_token.py`)
+- asset-service `Claims` struct 只读 `TeamID/Role`,不强校验 `sub`(`services/asset-service/internal/token`)
+- `SignUpload` handler 只调 `middleware.MustTeamID(r.Context())` 拿 team_id,不读 user_id(`internal/handler/assets.go:373`)
+- `RequireWriteRole` 接 `'owner'` 通过
+- 既有 `_fetch_project_reference_images` 用同套 S2S token 调 `/v1/projects/{pid}/assets` 实战过
+
+真 PUT 到 presigned URL 的 happy path 留 dev 环境实跑(`VERIFICATION.md` 清单)。
+
 **5. 角色头像:覆盖现有 `assets.file_url`,旧 url 失效。**
 用户场景:对已有角色"AI 生成头像" → 期望该角色立刻是新头像。生成新资产会让画布多一个角色节点,语义错。覆盖现有最直接。
 **副作用**:旧文件残留在 minio(无清理)。可接受(运营层级清理或 minio lifecycle)。

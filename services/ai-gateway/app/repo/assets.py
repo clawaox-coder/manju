@@ -43,3 +43,19 @@ async def update_asset_description(
             aid,
         )
     return row is not None
+
+
+async def update_asset_file_url(
+    *, team_id: str, user_id: str, asset_id: str, file_url: str
+) -> str | None:
+    """canvas-image-generation:AI 生成头像后覆盖角色 asset 的 file_url(旧 URL 失效)。"""
+    aid = uuidlib.UUID(asset_id)
+    async with team_ctx(team_id, user_id) as conn:
+        row = await conn.fetchrow(
+            """UPDATE assets SET file_url = $1, updated_at = now()
+                WHERE id = $2 AND deleted_at IS NULL
+              RETURNING file_url""",
+            file_url,
+            aid,
+        )
+    return row["file_url"] if row else None

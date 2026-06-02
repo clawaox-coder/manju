@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { Send, Loader2 } from 'lucide-react';
+import { Send, Loader2, ImagePlus } from 'lucide-react';
 import { useAsset, useUpdateAsset, useOptimizeCharacter } from '@/hooks/useAssetApi';
+import { AiOptimizeError } from '@/lib/api/ai';
 import { cn } from '@/lib/utils';
 
 interface Props {
@@ -14,6 +15,7 @@ export function CharacterVariant({ projectId, assetId }: Props) {
   const optimize = useOptimizeCharacter(projectId);
   const update = useUpdateAsset();
   const [instruction, setInstruction] = useState('');
+  const [avatarInstruction, setAvatarInstruction] = useState('');
   const [nameOverride, setNameOverride] = useState<string | null>(null);
   const instructionInputRef = useRef<HTMLInputElement>(null);
 
@@ -21,6 +23,15 @@ export function CharacterVariant({ projectId, assetId }: Props) {
   const nameDisplay = nameOverride ?? currentName;
 
   useEffect(() => { instructionInputRef.current?.focus(); }, []);
+
+  // 统一错误 toast:canvas-image-generation IMAGE_QUOTA_EXCEEDED 单独提示"下月恢复"。
+  const toastError = (e: unknown, fallback: string) => {
+    if (e instanceof AiOptimizeError && e.code === 'IMAGE_QUOTA_EXCEEDED') {
+      toast.error(e.message || '本月图像额度已用完,下月恢复');
+    } else {
+      toast.error((e as Error).message || fallback);
+    }
+  };
 
   const submitOptimize = async () => {
     const text = instruction.trim();
@@ -30,7 +41,20 @@ export function CharacterVariant({ projectId, assetId }: Props) {
       setInstruction('');
       toast.success('已改设定');
     } catch (e) {
-      toast.error((e as Error).message || '优化失败');
+      toastError(e, '优化失败');
+    }
+  };
+
+  // canvas-image-generation:AI 生成头像 → 覆盖 assets.file_url。
+  const submitAvatar = async () => {
+    if (optimize.isPending || !asset) return;
+    const hint = avatarInstruction.trim() || '保持当前角色设定';
+    try {
+      await optimize.mutateAsync({ asset_id: assetId, instruction: hint, generate_avatar: true });
+      setAvatarInstruction('');
+      toast.success('已生成新头像');
+    } catch (e) {
+      toastError(e, '生成头像失败');
     }
   };
 
@@ -110,6 +134,42 @@ export function CharacterVariant({ projectId, assetId }: Props) {
             AI 正在改设定…
           </p>
         )}
+      </div>
+
+      {/* AI 生成头像(canvas-image-generation)*/}
+      <div className="px-3.5 py-3 border-b border-border">
+        <div className="text-[11px] font-medium text-muted-foreground mb-1.5">AI 生成头像</div>
+        <div className={cn(
+          'flex items-center gap-2 rounded-xl border bg-card px-3 py-2 transition mb-2',
+          'border-border focus-within:border-primary/40',
+        )}>
+          <input
+            type="text"
+            className="flex-1 bg-transparent text-[13px] outline-none placeholder:text-muted-foreground disabled:opacity-60"
+            placeholder="头像描述(可选)…"
+            value={avatarInstruction}
+            onChange={(e) => setAvatarInstruction(e.target.value)}
+            disabled={optimize.isPending || !asset}
+          />
+        </div>
+        <button
+          type="button"
+          onClick={submitAvatar}
+          disabled={optimize.isPending || !asset}
+          className="w-full flex items-center justify-center gap-2 h-8 rounded-lg bg-primary text-primary-foreground text-[12px] font-medium disabled:opacity-50 transition"
+        >
+          {optimize.isPending ? (
+            <>
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              AI 正在生成…
+            </>
+          ) : (
+            <>
+              <ImagePlus className="w-3.5 h-3.5" />
+              生成头像
+            </>
+          )}
+        </button>
       </div>
 
       {/* 改名称 */}
