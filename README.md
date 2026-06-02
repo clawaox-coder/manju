@@ -12,10 +12,10 @@ audience:    AI 智能体开发者
 ## 启动
 
 ```bash
-cd /Users/aox/manju
-npm install
-npm run dev          # http://localhost:5173
-npm run build        # tsc -b && vite build
+# 在仓库根目录执行
+pnpm install
+pnpm dev             # http://localhost:5173
+pnpm build           # tsc -b && vite build
 ```
 
 ## 技术栈快照
