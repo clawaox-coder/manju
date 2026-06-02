@@ -320,11 +320,14 @@ export interface OptimizeCharacterInput {
   project_id: string;
   asset_id: string;
   instruction: string;
+  // canvas-image-generation:true → gpt-image-1 生成头像 → 覆盖 assets.file_url
+  generate_avatar?: boolean;
 }
 
 export interface OptimizeCharacterResult {
   asset_id: string;
   description: string | null;
+  file_url?: string | null;
 }
 
 // 单角色优化：LLM 改写该角色设定/描述，写回该资产。作用域仅该 asset。
