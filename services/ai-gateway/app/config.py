@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     # 中转网关可能要求显式 flag, 不能由 model 名 [1m] 后缀替代.
     anthropic_beta: str = ""
     openai_api_key: str = ""
+    # 图像生成上游(OpenAI 兼容)。默认直连 OpenAI;可指向中转网关(如 packyapi)。
+    # base_url 末尾不含 /generations|/edits,由 image.py 拼接。
+    openai_image_base_url: str = "https://api.openai.com/v1/images"
+    openai_image_model: str = "gpt-image-1"
     cors_origins: str = "http://localhost:5173,http://localhost:5174"
     log_level: str = "info"
 
