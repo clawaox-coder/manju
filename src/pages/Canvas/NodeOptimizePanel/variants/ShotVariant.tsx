@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { Send, Clock } from 'lucide-react';
+import { Send, Clock, Loader2 } from 'lucide-react';
 import { useShots, useUpdateShot, useOptimizeShot } from '@/hooks/useScriptApi';
 import { cn } from '@/lib/utils';
 
@@ -118,7 +118,10 @@ export function ShotVariant({ projectId, shotId }: Props) {
           </button>
         </div>
         {optimize.isPending && (
-          <p className="mt-1.5 text-[11px] text-muted-foreground">AI 正在改对白…</p>
+          <p className="mt-1.5 text-[11px] text-muted-foreground flex items-center gap-1.5">
+            <Loader2 className="w-3 h-3 animate-spin" />
+            AI 正在改对白…
+          </p>
         )}
       </div>
 

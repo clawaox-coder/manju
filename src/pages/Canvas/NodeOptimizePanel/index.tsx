@@ -3,6 +3,7 @@ import { X } from 'lucide-react';
 import { resolveNodeEntity, type NodeEntity } from '../nodeEntity';
 import { ScriptSceneVariant } from './variants/ScriptSceneVariant';
 import { ShotVariant } from './variants/ShotVariant';
+import { CharacterVariant } from './variants/CharacterVariant';
 import { PlaceholderVariant } from './variants/PlaceholderVariant';
 
 export interface NodeOptimizePanelProps {
@@ -62,9 +63,10 @@ function NodeContent({ entity, projectId, onClose }: { entity: NodeEntity; proje
     case 'shot':
       return <ShotVariant shotId={entity.shotId} projectId={projectId} />;
     case 'character':
+      return <CharacterVariant assetId={entity.assetId} projectId={projectId} />;
     case 'hub-ai':
     case 'hub-video':
-      return <PlaceholderVariant text="此类型节点优化即将上线(P3/P4)。" />;
+      return <PlaceholderVariant text="枢纽节点整体动作即将上线(P4)。" />;
     default:
       return <PlaceholderVariant text="该节点暂不支持优化。" />;
   }

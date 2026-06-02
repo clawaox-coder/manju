@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { Send } from 'lucide-react';
+import { Send, Loader2 } from 'lucide-react';
 import { useScript, useRewriteScene } from '@/hooks/useScriptApi';
 import { splitScenes } from '@/pages/Canvas/sceneSplit';
 import { AiOptimizeError } from '@/lib/api/ai';
@@ -94,7 +94,10 @@ export function ScriptSceneVariant({ projectId, sceneIndex }: Props) {
           </button>
         </div>
         {rewrite.isPending && (
-          <p className="mt-2 text-[11px] text-muted-foreground">AI 正在重写本场…</p>
+          <p className="mt-2 text-[11px] text-muted-foreground flex items-center gap-1.5">
+            <Loader2 className="w-3 h-3 animate-spin" />
+            AI 正在重写本场…
+          </p>
         )}
       </div>
     </div>
