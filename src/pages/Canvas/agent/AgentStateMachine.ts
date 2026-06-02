@@ -14,7 +14,6 @@ export const INITIAL_STATE: AgentState = {
   stage: 'idea',
   step: 'chatting',
   ideaContext: {},
-  focusedNodeId: null,
 };
 
 // 每个 stage 的"生成中/进行中"步骤——进度展示与去重用。
@@ -50,11 +49,6 @@ export class AgentStateMachine {
   /** 标记当前 stage 的产物已就绪，进入 ready 步骤（停在本阶段等待对话）。 */
   markReady(stage: Stage): void {
     this.state = { ...this.state, stage, step: 'ready' };
-  }
-
-  /** 点选画布节点 → 记录聚焦目标（聚焦讨论交由 chat() 处理，不再写死台词）。 */
-  focusNode(nodeId: string | null): void {
-    this.state = { ...this.state, focusedNodeId: nodeId };
   }
 
   /** 依据项目已有数据恢复到正确阶段。 */

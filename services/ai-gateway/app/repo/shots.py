@@ -64,3 +64,37 @@ async def replace_project_shots(
                 json.dumps(meta, ensure_ascii=False),
             )
     return sum(1 for s in shots if isinstance(s, dict))
+
+
+async def get_shot(*, team_id: str, user_id: str, shot_id: str) -> dict | None:
+    """读单个 shot(单节点优化用)。"""
+    sid = uuidlib.UUID(shot_id)
+    async with team_ctx(team_id, user_id) as conn:
+        row = await conn.fetchrow(
+            "SELECT id, project_id, title, shot_type, duration_ms, dialog, image_url "
+            "FROM shots WHERE id = $1",
+            sid,
+        )
+    if row is None:
+        return None
+    return {
+        "id": str(row["id"]),
+        "project_id": str(row["project_id"]),
+        "title": row["title"],
+        "shot_type": row["shot_type"],
+        "duration_ms": row["duration_ms"],
+        "dialog": row["dialog"],
+        "image_url": row["image_url"],
+    }
+
+
+async def update_shot_dialog(*, team_id: str, user_id: str, shot_id: str, dialog: str) -> str | None:
+    """只改这一镜的对白(updated_at 由 trg_shots_updated 触发器维护)。"""
+    sid = uuidlib.UUID(shot_id)
+    async with team_ctx(team_id, user_id) as conn:
+        row = await conn.fetchrow(
+            "UPDATE shots SET dialog = $1 WHERE id = $2 RETURNING dialog",
+            dialog,
+            sid,
+        )
+    return row["dialog"] if row else None

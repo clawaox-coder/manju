@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import * as api from '@/lib/api/assets';
 import type { ListAssetsParams, CreateAssetInput, AssetType } from '@/lib/api/assets';
+import { optimizeCharacter, type OptimizeCharacterInput } from '@/lib/api/ai';
 
 export function useAssets(params: ListAssetsParams = {}) {
   return useQuery({
@@ -45,5 +46,19 @@ export function useDeleteAsset() {
 export function useSignUpload() {
   return useMutation({
     mutationFn: (input: api.SignUploadInput) => api.signUpload(input),
+  });
+}
+
+// 单角色 AI 优化(改设定/描述):后端 LLM 改写后直写 assets.description。
+// 成功后 prefix 失效 ['asset', ...] 让单查也重取,顺带 ['assets'] 列表刷。
+export function useOptimizeCharacter(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: Omit<OptimizeCharacterInput, 'project_id'>) =>
+      optimizeCharacter({ project_id: projectId, ...input }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['assets'] });
+      qc.invalidateQueries({ queryKey: ['asset'] });
+    },
   });
 }

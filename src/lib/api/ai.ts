@@ -274,3 +274,89 @@ export async function generateTitle(input: TitleInput): Promise<TitleResponse> {
   }
   return res.json() as Promise<TitleResponse>;
 }
+
+// ---- 单节点优化(canvas-node-optimize-panel)：专门端点，绝不复用上面的对话接口 ----
+// ai-gateway 返回裸 JSON(无 { data } 信封)，故用裸 fetch(见底部 aiPost)，刻意不经 request()(它会剥 .data)。
+// 节点面板只调这里 + 既有制作/CRUD 接口，不触 chat()/streamScriptContinue()/classifyIntent()。
+
+export interface RewriteSceneInput {
+  project_id: string;
+  scene_index: number;
+  instruction: string;
+}
+
+export interface RewriteSceneResult {
+  content: string;
+  version_no: number;
+}
+
+// 精准单场重写：后端定位该场→LLM 仅重写该场→原子替换→bump version。版本冲突时后端返 409。
+export async function rewriteScene(input: RewriteSceneInput): Promise<RewriteSceneResult> {
+  return aiPost<RewriteSceneResult>('/v1/ai/script/rewrite-scene', input);
+}
+
+export type ShotOptimizeMode = 'text' | 'image' | 'both';
+
+export interface OptimizeShotInput {
+  project_id: string;
+  shot_id: string;
+  instruction: string;
+  ref_image_url?: string;
+  mode: ShotOptimizeMode;
+}
+
+export interface OptimizeShotResult {
+  shot_id: string;
+  dialog: string | null;
+  image_url: string | null;
+}
+
+// 单镜优化：mode=text 改对白 / image 重画这一镜 / both 两者。作用域仅该 shot。
+export async function optimizeShot(input: OptimizeShotInput): Promise<OptimizeShotResult> {
+  return aiPost<OptimizeShotResult>('/v1/ai/shot/optimize', input);
+}
+
+export interface OptimizeCharacterInput {
+  project_id: string;
+  asset_id: string;
+  instruction: string;
+}
+
+export interface OptimizeCharacterResult {
+  asset_id: string;
+  description: string | null;
+}
+
+// 单角色优化：LLM 改写该角色设定/描述，写回该资产。作用域仅该 asset。
+export async function optimizeCharacter(input: OptimizeCharacterInput): Promise<OptimizeCharacterResult> {
+  return aiPost<OptimizeCharacterResult>('/v1/ai/character/optimize', input);
+}
+
+// 节点优化端点的错误类型。携带 status + code 以便上层区分 409 VERSION_CONFLICT 等。
+export class AiOptimizeError extends Error {
+  status: number;
+  code?: string;
+  constructor(status: number, message: string, code?: string) {
+    super(message);
+    this.name = 'AiOptimizeError';
+    this.status = status;
+    this.code = code;
+  }
+}
+
+// ai-gateway 节点优化端点返回裸 JSON(无 { data } 信封)，错误体为 { detail: { code, message } }。
+// 与 chat()/generateTitle() 同一裸 fetch 写法，刻意不经 request()(那会剥 .data)。
+async function aiPost<T>(path: string, body: unknown): Promise<T> {
+  const token = getAccessToken();
+  const res = await fetch(`${AI_BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    const detail = (err as { detail?: { code?: string; message?: string } })?.detail;
+    throw new AiOptimizeError(res.status, detail?.message || `请求失败: ${res.status}`, detail?.code);
+  }
+  return res.json() as Promise<T>;
+}

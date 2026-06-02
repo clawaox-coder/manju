@@ -1,6 +1,5 @@
 """ai-gateway 7 端点 + GET /tasks/:id."""
 from __future__ import annotations
-import uuid as uuidlib
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
@@ -349,6 +348,8 @@ async def title(
 
 
 # ---- 9. POST /v1/ai/tts ----
+
+class TTSRequest(BaseModel):
     text: str = Field(min_length=1, max_length=4096)
     voice: str = Field(min_length=1)
     speed: float = Field(default=1.0, ge=0.25, le=4.0)
@@ -369,4 +370,63 @@ async def tts(
         content=audio_bytes,
         media_type="audio/mpeg",
         headers={"Content-Disposition": 'inline; filename="tts.mp3"'},
+    )
+
+
+# ---- 10. 单节点优化(canvas-node-optimize-panel): 专门端点,不复用 /chat ----
+
+class RewriteSceneRequest(BaseModel):
+    project_id: str
+    scene_index: int = Field(ge=0)
+    instruction: str = Field(min_length=1)
+
+
+@router.post("/script/rewrite-scene")
+async def script_rewrite_scene(
+    body: RewriteSceneRequest,
+    auth: AuthContext = Depends(require_auth),
+):
+    _require_write(auth)
+    return await ai_svc.rewrite_scene(
+        team_id=auth.team_id, user_id=auth.user_id,
+        project_id=body.project_id, scene_index=body.scene_index, instruction=body.instruction,
+    )
+
+
+class ShotOptimizeRequest(BaseModel):
+    project_id: str
+    shot_id: str
+    instruction: str = Field(min_length=1)
+    ref_image_url: str | None = None
+    mode: str = Field(default="text", pattern="^(text|image|both)$")
+
+
+@router.post("/shot/optimize")
+async def shot_optimize(
+    body: ShotOptimizeRequest,
+    auth: AuthContext = Depends(require_auth),
+):
+    _require_write(auth)
+    return await ai_svc.optimize_shot(
+        team_id=auth.team_id, user_id=auth.user_id, project_id=body.project_id,
+        shot_id=body.shot_id, instruction=body.instruction,
+        ref_image_url=body.ref_image_url, mode=body.mode,
+    )
+
+
+class CharacterOptimizeRequest(BaseModel):
+    project_id: str
+    asset_id: str
+    instruction: str = Field(min_length=1)
+
+
+@router.post("/character/optimize")
+async def character_optimize(
+    body: CharacterOptimizeRequest,
+    auth: AuthContext = Depends(require_auth),
+):
+    _require_write(auth)
+    return await ai_svc.optimize_character(
+        team_id=auth.team_id, user_id=auth.user_id,
+        project_id=body.project_id, asset_id=body.asset_id, instruction=body.instruction,
     )
