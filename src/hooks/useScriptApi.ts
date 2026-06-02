@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import * as api from '@/lib/api/scripts';
 import type { CreateShotInput } from '@/lib/api/scripts';
-import { rewriteScene, AiOptimizeError, type RewriteSceneInput } from '@/lib/api/ai';
+import { rewriteScene, optimizeShot, AiOptimizeError, type RewriteSceneInput, type OptimizeShotInput } from '@/lib/api/ai';
 
 export function useScript(projectId: string | undefined) {
   return useQuery({
@@ -56,6 +56,17 @@ export function useUpdateShot(projectId: string) {
   return useMutation({
     mutationFn: ({ shotId, input }: { shotId: string; input: Partial<CreateShotInput> }) =>
       api.updateShot(projectId, shotId, input),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['shots', projectId] }); },
+  });
+}
+
+// 单镜 AI 优化(对白):mode=text → 后端 LLM 重写并直写 shots.dialog。
+// mode=image/both 后端返 501(无图像模型,二期);前端目前只暴露 text。
+export function useOptimizeShot(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: Omit<OptimizeShotInput, 'project_id'>) =>
+      optimizeShot({ project_id: projectId, ...input }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['shots', projectId] }); },
   });
 }

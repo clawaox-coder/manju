@@ -2,6 +2,7 @@ import { useEditor, useValue, createShapeId } from 'tldraw';
 import { X } from 'lucide-react';
 import { resolveNodeEntity, type NodeEntity } from '../nodeEntity';
 import { ScriptSceneVariant } from './variants/ScriptSceneVariant';
+import { ShotVariant } from './variants/ShotVariant';
 import { PlaceholderVariant } from './variants/PlaceholderVariant';
 
 export interface NodeOptimizePanelProps {
@@ -59,6 +60,7 @@ function NodeContent({ entity, projectId, onClose }: { entity: NodeEntity; proje
     case 'script-scene':
       return <ScriptSceneVariant sceneIndex={entity.sceneIndex} projectId={projectId} onDone={onClose} />;
     case 'shot':
+      return <ShotVariant shotId={entity.shotId} projectId={projectId} />;
     case 'character':
     case 'hub-ai':
     case 'hub-video':
