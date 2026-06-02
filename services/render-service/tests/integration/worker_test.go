@@ -148,6 +148,7 @@ func TestWorkerE2E(t *testing.T) {
 	w := worker.New(worker.Deps{
 		Log:      log,
 		Repo:     repoJ,
+		Pool:     appPool,
 		S3:       s3c,
 		Renderer: &fakeRenderer{},
 		Cfg:      cfg,
@@ -180,5 +181,6 @@ func TestWorkerE2E(t *testing.T) {
 }
 
 func strPtr(s string) *string { return &s }
+
 var _ worker.Renderer = (*fakeRenderer)(nil)
 var _ = http.StatusOK
