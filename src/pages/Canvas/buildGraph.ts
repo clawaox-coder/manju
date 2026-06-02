@@ -7,6 +7,9 @@ export interface CanvasNode {
   id: string;
   type?: string;
   position: { x: number; y: number };
+  // canvas-node-edit-layout:用户手动缩放后的尺寸(从 persistence 复原)。
+  // 未设则由 CanvasSync 用 MANJU_NODE_SIZE[type] 默认值兜底。
+  size?: { w: number; h: number };
   data?: Record<string, unknown>;
 }
 
@@ -44,13 +47,23 @@ export function buildCanvasGraph(
   const charList = (characters ?? []).slice(0, 6);
 
   const savedPositions = projectId ? loadCanvasPositions(projectId) : null;
+  // 把 saved 的 {x,y,w?,h?} 投到 CanvasNode 的 position + 可选 size。
+  // 用户已 saved 的位置/尺寸优先于默认布局/默认尺寸。
+  const sized = (id: string, fallback: { x: number; y: number }): Pick<CanvasNode, 'position' | 'size'> => {
+    const s = savedPositions?.get(id);
+    return {
+      position: s ? { x: s.x, y: s.y } : fallback,
+      size: s && s.w !== undefined && s.h !== undefined ? { w: s.w, h: s.h } : undefined,
+    };
+  };
+
   // --- Script scene nodes (left column) ---
   scenes.forEach((scene, i) => {
     const id = `script-${i}`;
     nodes.push({
       id,
       type: 'script',
-      position: savedPositions?.get(id) ?? { x: 0, y: i * 200 },
+      ...sized(id, { x: 0, y: i * 200 }),
       data: {
         sceneNumber: i + 1,
         title: `Script ${String(i + 1).padStart(2, '0')} · ${scene.title}`,
@@ -66,7 +79,7 @@ export function buildCanvasGraph(
     nodes.push({
       id: 'ai-gen',
       type: 'ai',
-      position: savedPositions?.get('ai-gen') ?? { x: 380, y: aiY },
+      ...sized('ai-gen', { x: 380, y: aiY }),
       data: {
         title: 'Agent Core · Storyboard Director',
         label: 'AI 分镜生成',
@@ -84,7 +97,7 @@ export function buildCanvasGraph(
     nodes.push({
       id,
       type: 'character',
-      position: savedPositions?.get(id) ?? { x: 350 + (i % 2) * 180, y: -160 + Math.floor(i / 2) * 200 },
+      ...sized(id, { x: 350 + (i % 2) * 180, y: -160 + Math.floor(i / 2) * 200 }),
       data: {
         title: `Character · ${char.name}`,
         name: char.name,
@@ -107,7 +120,7 @@ export function buildCanvasGraph(
     nodes.push({
       id,
       type: 'storyboard',
-      position: savedPositions?.get(id) ?? { x: 650, y: i * 230 },
+      ...sized(id, { x: 650, y: i * 230 }),
       data: {
         shotNumber: i + 1,
         title: `Shot ${String(i + 1).padStart(2, '0')} · ${shot.title || `镜头 ${i + 1}`}`,
@@ -143,7 +156,7 @@ export function buildCanvasGraph(
     nodes.push({
       id: 'video-out',
       type: 'video',
-      position: savedPositions?.get('video-out') ?? { x: 950, y: videoY },
+      ...sized('video-out', { x: 950, y: videoY }),
       data: {
         title: `Video Master · ${projectName || '视频输出'}`,
         duration: formatDuration(totalMs),

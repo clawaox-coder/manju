@@ -22,6 +22,7 @@ import { createRender, getRender } from '@/lib/api/render';
 import { buildCanvasGraph } from './buildGraph';
 import { ManjuNodeUtil, MANJU_NODE_SIZE, type ManjuNodeType, type ManjuNodeProps } from './canvas/ManjuNodeUtil';
 import { NodeOptimizePanel } from './NodeOptimizePanel';
+import { saveCanvasPositions, type PositionRecord } from './persistence';
 
 const MANJU_SHAPE_UTILS = [ManjuNodeUtil];
 
@@ -95,6 +96,8 @@ interface CanvasGraphNode {
   id: string;
   type?: string;
   position?: { x: number; y: number };
+  // canvas-node-edit-layout:用户已 saved 的尺寸(persistence),优先于 MANJU_NODE_SIZE 默认。
+  size?: { w: number; h: number };
   data?: {
     title?: string;
     content?: string;
@@ -120,11 +123,12 @@ interface CanvasGraphEdge {
 }
 
 // 把 buildGraph 的 node.data 按 type 映射成 manjuNode 的扁平 props。
+// 尺寸:用户已 saved(node.size)优先,否则用 MANJU_NODE_SIZE[type] 默认。
 function toManjuProps(node: CanvasGraphNode): ManjuNodeProps {
   const d = node.data ?? {};
   const nodeType = (['script', 'storyboard', 'character', 'ai', 'video'].includes(node.type ?? '')
     ? node.type : 'script') as ManjuNodeType;
-  const size = MANJU_NODE_SIZE[nodeType];
+  const size = node.size ?? MANJU_NODE_SIZE[nodeType];
   const base = { ...size, nodeType, title: d.title ?? node.id, body: '', badge: '', imageUrl: '', status: '' };
   switch (nodeType) {
     case 'script':
@@ -147,12 +151,15 @@ function stripShapePrefix(shapeId: string): string {
 }
 
 
-// 把 graph 同步成 tldraw 自定义 manjuNode + bound arrow 连线（只读镜子）。
+// 把 graph 同步成 tldraw 自定义 manjuNode + bound arrow 连线。
+// canvas-node-edit-layout:节点可由用户拖动 / 缩放,持久化经 store.listen + debounce 落 localStorage。
 function CanvasSync({
   graph,
+  projectId,
   onNodeSelect,
 }: {
   graph: { nodes: CanvasGraphNode[]; edges: CanvasGraphEdge[] };
+  projectId: string | null;
   onNodeSelect?: (nodeId: string) => void;
 }) {
   const editor = useEditor();
@@ -174,8 +181,10 @@ function CanvasSync({
     const existing = syncedRef.current;
     const currentIds = new Set(graph.nodes.map((n) => n.id));
 
-    // 所有写操作包在 run(ignoreShapeLock) 里：节点 isLocked 挡用户拖动，但代码可摆位
-    // （P4.1 spike 结论）。StrictMode 双调时已存在的节点走 update 分支，幂等。
+    // 所有写操作包在 editor.run 里聚成一个 history 步骤(撤销/重做语义清晰)。
+    // canvas-node-edit-layout:节点已可由用户拖动,不再 isLocked,也不需要 ignoreShapeLock。
+    // arrow 连线仍 isLocked(用户不该拖/删 arrow,那是后续 change)。
+    // StrictMode 双调时已存在的节点走 update 分支,幂等。
     editor.run(() => {
       // 删掉不再存在的节点（其相连 arrow 由 tldraw 随绑定一并清理）。
       const toRemove = [...existing].filter((id) => !currentIds.has(id));
@@ -190,7 +199,7 @@ function CanvasSync({
         const y = node.position?.y ?? 0;
         if (!existing.has(node.id)) {
           editor.createShape({
-            id: shapeId, type: 'manjuNode', x, y, isLocked: true, props,
+            id: shapeId, type: 'manjuNode', x, y, props,
           } as unknown as Parameters<typeof editor.createShape>[0]);
         } else {
           editor.updateShape({
@@ -214,10 +223,49 @@ function CanvasSync({
         editor.updateShape({ id: arrowId, isLocked: true, type: 'arrow' } as unknown as Parameters<typeof editor.updateShape>[0]);
         syncedEdgesRef.current.add(edge.id);
       }
-    }, { ignoreShapeLock: true });
+    });
 
     syncedRef.current = currentIds;
   }, [editor, graph.nodes, graph.edges]);
+
+  // canvas-node-edit-layout:监听用户拖动 / 缩放节点,debounce 300ms 落 localStorage。
+  // source: 'user' 过滤:只听用户操作,程序化 createShape/updateShape(本组件自己)不触发。
+  const saveTimerRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!editor || !projectId) return;
+    // tldraw v5 类型坑:TLShape 是封闭联合,自定义 shape 'manjuNode' 不在其中,
+    // getShape 返 union 后 narrow 到 never。读 type/x/y/props 须 cast(与 createShape/
+    // updateShape 调用点的 `as unknown as` 同模式,见 ManjuNodeUtil 头注释)。
+    type ManjuShapeView = { type: string; x: number; y: number; props: { w?: number; h?: number } };
+    const flush = () => {
+      saveTimerRef.current = null;
+      const map = new Map<string, PositionRecord>();
+      for (const id of editor.getCurrentPageShapeIds()) {
+        const shape = editor.getShape(id) as unknown as ManjuShapeView | undefined;
+        if (!shape || shape.type !== 'manjuNode') continue;
+        const nodeId = stripShapePrefix(String(id));
+        map.set(nodeId, { x: shape.x, y: shape.y, w: shape.props.w, h: shape.props.h });
+      }
+      if (map.size > 0) saveCanvasPositions(projectId, map);
+    };
+    const unsubscribe = editor.store.listen(
+      (entry) => {
+        const updated = entry.changes.updated as Record<string, [unknown, unknown]>;
+        const hasManju = Object.values(updated).some((pair) => {
+          const after = pair[1] as { typeName?: string; type?: string };
+          return after?.typeName === 'shape' && after?.type === 'manjuNode';
+        });
+        if (!hasManju) return;
+        if (saveTimerRef.current != null) clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = window.setTimeout(flush, 300);
+      },
+      { source: 'user', scope: 'document' },
+    );
+    return () => {
+      if (saveTimerRef.current != null) clearTimeout(saveTimerRef.current);
+      unsubscribe();
+    };
+  }, [editor, projectId]);
 
   useEffect(() => {
     if (!selectedShapeIds.length || !onNodeSelect) return;
@@ -637,7 +685,7 @@ function CanvasInner() {
           资产库
         </button>
         <Tldraw hideUi shapeUtils={MANJU_SHAPE_UTILS} onMount={(editor) => { editorRef.current = editor; }}>
-          <CanvasSync graph={graph} onNodeSelect={handleNodeClick} />
+          <CanvasSync graph={graph} projectId={projectId} onNodeSelect={handleNodeClick} />
           <CanvasToolbar />
           {selectedNodeId && (
             <NodeOptimizePanel
