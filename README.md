@@ -3,19 +3,18 @@
 ```yaml
 project:     manju-ai-studio
 purpose:     AI 短剧创作平台. 剧本 → 分镜 → 视频 全流程 AI 辅助.
-status:      frontend-shipped, backend-not-started
-root:        /Users/aox/manju
-docs:        /Users/aox/manju/docs  (agent 文档, 见 docs/INDEX.md)
+status:      frontend-shipped; backend-in-progress (6 services + tests + CI)
+docs:        docs/  (agent 文档, 见 docs/INDEX.md)
 audience:    AI 智能体开发者
 ```
 
 ## 启动
 
 ```bash
-cd /Users/aox/manju
-npm install
-npm run dev          # http://localhost:5173
-npm run build        # tsc -b && vite build
+# 在仓库根目录执行
+pnpm install
+pnpm dev             # http://localhost:5173
+pnpm build           # tsc -b && vite build
 ```
 
 ## 技术栈快照
