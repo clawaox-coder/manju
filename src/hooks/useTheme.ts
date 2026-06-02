@@ -1,22 +1,23 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useSyncExternalStore } from 'react';
 import { useStore } from '@/store';
 import type { Theme } from '@/types';
 
 const mql = () => matchMedia('(prefers-color-scheme: dark)');
 
+// 系统深色偏好是浏览器侧的外部可变源:用 useSyncExternalStore 订阅,
+// 避免在 effect 内同步 setState 触发级联渲染(react-hooks/set-state-in-effect)。
+function subscribeSystemDark(onChange: () => void): () => void {
+  const m = mql();
+  m.addEventListener('change', onChange);
+  return () => m.removeEventListener('change', onChange);
+}
+
+const getSystemDark = (): boolean => mql().matches;
+
 /** 由主题状态推导有效明暗(reactive):auto 跟随系统偏好并监听其变化。 */
 export function useEffectiveTheme(): 'light' | 'dark' {
   const theme = useStore((s) => s.theme);
-  const [systemDark, setSystemDark] = useState(() => mql().matches);
-
-  useEffect(() => {
-    if (theme !== 'auto') return;
-    const m = mql();
-    const onChange = () => setSystemDark(m.matches);
-    setSystemDark(m.matches);
-    m.addEventListener('change', onChange);
-    return () => m.removeEventListener('change', onChange);
-  }, [theme]);
+  const systemDark = useSyncExternalStore(subscribeSystemDark, getSystemDark);
 
   return theme === 'dark' || (theme === 'auto' && systemDark) ? 'dark' : 'light';
 }
