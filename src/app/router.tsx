@@ -13,6 +13,7 @@ const Billing = lazyWithRetry(() => import('@/pages/Billing'));
 const ApiKeys = lazyWithRetry(() => import('@/pages/ApiKeys'));
 const Help = lazyWithRetry(() => import('@/pages/Help'));
 const Team = lazyWithRetry(() => import('@/pages/Team'));
+const ImageQuotaAdmin = lazyWithRetry(() => import('@/pages/Admin/ImageQuota'));
 
 const fallback = (
   <div className="flex items-center justify-center w-full h-[calc(100vh-4rem)] min-h-[400px]">
@@ -76,6 +77,10 @@ const router = createBrowserRouter([
       { path: 'apikeys', element: lazyEl(ApiKeys) },
       { path: 'help', element: lazyEl(Help) },
     ]
+  },
+  {
+    path: '/admin/image-quota',
+    element: <RequireAuth>{lazyEl(ImageQuotaAdmin)}</RequireAuth>,
   },
   { path: '*', element: <Navigate to="/" replace /> },
 ]);

@@ -1,6 +1,6 @@
 import { useRef } from 'react';
 import { useEditor, useValue } from 'tldraw';
-import { MousePointer2, Hand, ImagePlus, Minus, Plus } from 'lucide-react';
+import { MousePointer2, Hand, ImagePlus, Minus, Plus, ArrowRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 /**
@@ -45,6 +45,9 @@ export function CanvasToolbar() {
         </ToolButton>
         <ToolButton label="抓手 / 拖动画布" active={tool === 'hand'} onClick={() => editor.setCurrentTool('hand')}>
           <Hand className="w-[18px] h-[18px]" />
+        </ToolButton>
+        <ToolButton label="连线" active={tool === 'arrow'} onClick={() => editor.setCurrentTool('arrow')}>
+          <ArrowRight className="w-[18px] h-[18px]" />
         </ToolButton>
         <ToolButton label="上传图片 / 视频" active={false} onClick={pickFiles}>
           <ImagePlus className="w-[18px] h-[18px]" />

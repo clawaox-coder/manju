@@ -22,8 +22,7 @@ from .. import internal_token
 
 logger = logging.getLogger("ai-gateway.image")
 
-OPENAI_IMAGE_URL = "https://api.openai.com/v1/images"
-IMAGE_TIMEOUT = 60.0   # 单张 gpt-image-1 5-15s,留余量
+IMAGE_TIMEOUT = 180.0  # 经中转网关(packyapi gpt-image-2)单张可达 60-90s,给足余量
 UPLOAD_TIMEOUT = 30.0
 
 
@@ -51,7 +50,10 @@ async def generate_image(
     reference_images: [{"data": <base64 str>, "media_type": "image/png"}] —— 复用
     既有 _fetch_project_reference_images 的格式。有则走 images.edit(多模态),否则 images.generate。
     """
+    s = get_settings()
     api_key = _require_openai_key()
+    base_url = s.openai_image_base_url.rstrip("/")
+    model = s.openai_image_model
     headers = {"Authorization": f"Bearer {api_key}"}
 
     async with httpx.AsyncClient(timeout=IMAGE_TIMEOUT) as client:
@@ -65,21 +67,21 @@ async def generate_image(
                     ext = "png" if media.endswith("png") else "jpg"
                     files.append(("image[]", (f"ref_{i}.{ext}", img_bytes, media)))
                 form: dict[str, Any] = {
-                    "model": "gpt-image-1",
+                    "model": model,
                     "prompt": prompt,
                     "size": size,
                     "quality": "medium",
                     "n": "1",
                 }
                 resp = await client.post(
-                    f"{OPENAI_IMAGE_URL}/edits", headers=headers, files=files, data=form,
+                    f"{base_url}/edits", headers=headers, files=files, data=form,
                 )
             else:
                 resp = await client.post(
-                    f"{OPENAI_IMAGE_URL}/generations",
+                    f"{base_url}/generations",
                     headers=headers,
                     json={
-                        "model": "gpt-image-1",
+                        "model": model,
                         "prompt": prompt,
                         "size": size,
                         "quality": "medium",
@@ -89,24 +91,44 @@ async def generate_image(
         except httpx.HTTPError as e:
             raise HTTPException(
                 status_code=502,
-                detail={"code": "IMAGE_NETWORK_ERROR", "message": f"OpenAI 网络错误:{e}"},
+                detail={"code": "IMAGE_NETWORK_ERROR", "message": f"图像上游网络错误:{e}"},
             )
 
         if resp.status_code != 200:
-            logger.error(f"OpenAI image error: {resp.status_code} {resp.text[:300]}")
+            logger.error(f"image provider error: {resp.status_code} {resp.text[:300]}")
             raise HTTPException(
                 status_code=502,
-                detail={"code": "OPENAI_IMAGE_ERROR", "message": f"OpenAI 图像生成失败:{resp.status_code}"},
+                detail={"code": "OPENAI_IMAGE_ERROR", "message": f"图像生成失败:{resp.status_code}"},
             )
         body = resp.json()
         try:
-            b64 = body["data"][0]["b64_json"]
+            item = body["data"][0]
         except (KeyError, IndexError) as e:
             raise HTTPException(
                 status_code=502,
-                detail={"code": "OPENAI_IMAGE_ERROR", "message": f"OpenAI 响应缺 b64_json:{e}"},
+                detail={"code": "OPENAI_IMAGE_ERROR", "message": f"图像响应缺 data:{e}"},
             )
-        return base64.b64decode(b64)
+        # OpenAI gpt-image-1 返 b64_json;中转网关(packyapi gpt-image-2)返 url。两者都支持。
+        if item.get("b64_json"):
+            return base64.b64decode(item["b64_json"])
+        if item.get("url"):
+            try:
+                dl = await client.get(item["url"])
+            except httpx.HTTPError as e:
+                raise HTTPException(
+                    status_code=502,
+                    detail={"code": "IMAGE_NETWORK_ERROR", "message": f"下载生成图网络错误:{e}"},
+                )
+            if dl.status_code != 200:
+                raise HTTPException(
+                    status_code=502,
+                    detail={"code": "OPENAI_IMAGE_ERROR", "message": f"下载生成图失败:{dl.status_code}"},
+                )
+            return dl.content
+        raise HTTPException(
+            status_code=502,
+            detail={"code": "OPENAI_IMAGE_ERROR", "message": "图像响应缺 b64_json/url"},
+        )
 
 
 async def upload_to_asset_service(

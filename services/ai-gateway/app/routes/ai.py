@@ -82,6 +82,7 @@ class StoryboardGenerateRequest(BaseModel):
     style: str = "default"
     shot_ids: list[str] | None = None
     regenerate_all: bool = False
+    with_images: bool = True
 
 
 @router.post("/storyboard/generate")
@@ -113,6 +114,7 @@ async def storyboard_generate(
         style=body.style,
         shot_ids=body.shot_ids,
         regenerate_all=body.regenerate_all,
+        with_images=body.with_images,
         task_id=str(task.id),
     )
 

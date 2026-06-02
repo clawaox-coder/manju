@@ -395,6 +395,7 @@ async def storyboard_generate_async(
     style: str,
     shot_ids: list[str] | None,
     regenerate_all: bool,
+    with_images: bool,
     task_id: str,
 ) -> None:
     """后台跑分镜生成. 由 BackgroundTasks 调度, 错误自己消化 (写 ai_tasks.error)."""
@@ -449,17 +450,54 @@ async def storyboard_generate_async(
             return
 
         # 持久化到 shots 表 (script-service 共享库)
-        n = await shots_repo.replace_project_shots(
+        inserted_shots = await shots_repo.replace_project_shots(
             team_id=team_id, user_id=user_id, project_id=project_id,
             shots=shots, style=style,
         )
+        images_generated = 0
+        images_failed = 0
+
+        if with_images and inserted_shots:
+            for idx, shot_info in enumerate(inserted_shots):
+                try:
+                    prompt = _build_storyboard_shot_image_prompt(shots[idx], style=style, scene_index=idx)
+                    image_url = await _generate_and_save_image(
+                        team_id=team_id,
+                        user_id=user_id,
+                        project_id=project_id,
+                        prompt=prompt,
+                        size="1792x1024",
+                        purpose="shot-image",
+                        filename=f"shot-{shot_info['id']}.png",
+                    )
+                    await shots_repo.update_shot_image(
+                        team_id=team_id,
+                        user_id=user_id,
+                        shot_id=shot_info["id"],
+                        image_url=image_url,
+                    )
+                    images_generated += 1
+                except HTTPException as exc:
+                    if exc.status_code == 429:
+                        logger.info("storyboard image quota exceeded, skip remaining shots")
+                        break
+                    images_failed += 1
+                    logger.warning("storyboard shot image failed: shot=%s detail=%s", shot_info["id"], exc.detail)
+                except Exception as exc:
+                    images_failed += 1
+                    logger.warning("storyboard shot image failed unexpectedly: shot=%s err=%s", shot_info["id"], exc)
         await tasks_repo.update_task_status(
             team_id=team_id, user_id=user_id,
             task_id=_UUID(task_id),
             status="succeeded",
             input_tokens=in_tok, output_tokens=out_tok,
             duration_ms=duration_ms,
-            result_data={"shots_count": n, "style": style},
+            result_data={
+                "shots_count": len(inserted_shots),
+                "style": style,
+                "images_generated": images_generated,
+                "images_failed": images_failed,
+            },
             done=True,
         )
     except Exception as e:
@@ -470,6 +508,19 @@ async def storyboard_generate_async(
             status="failed",
             duration_ms=duration_ms, error=str(e), done=True,
         )
+
+
+def _build_storyboard_shot_image_prompt(shot: dict, *, style: str, scene_index: int) -> str:
+    return (
+        "为漫剧分镜生成单张画面。\n"
+        f"镜头序号: 第 {scene_index + 1} 镜\n"
+        f"标题: {shot.get('title') or '(无)'}\n"
+        f"景别: {shot.get('shot_type') or '(未指定)'}\n"
+        f"场景风格: {shot.get('bg_style') or style or 'default'}\n"
+        f"对白: {shot.get('dialog') or '(无对白)'}\n"
+        f"描述: {shot.get('description') or '(无)'}\n"
+        "要求: 保持角色一致性，输出适合 16:9 分镜预览的动漫画面。"
+    )
 
 
 # ---- 3. consistency/check ----

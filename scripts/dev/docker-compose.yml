@@ -274,6 +274,10 @@ services:
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
       ANTHROPIC_BASE_URL: "${ANTHROPIC_BASE_URL:-}"
       ANTHROPIC_MODEL: "claude-sonnet-4-6"
+      # 图像生成上游(OpenAI 兼容,可指向中转网关如 packyapi;无 key 则图像生成返 503)
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      OPENAI_IMAGE_BASE_URL: "${OPENAI_IMAGE_BASE_URL:-https://api.openai.com/v1/images}"
+      OPENAI_IMAGE_MODEL: "${OPENAI_IMAGE_MODEL:-gpt-image-1}"
       CORS_ORIGINS: "http://localhost:5173,http://localhost:5174"
       LOG_LEVEL: info
     ports:

@@ -34,13 +34,14 @@ async def replace_project_shots(
     project_id: str,
     shots: list[dict],
     style: str,
-) -> int:
-    """清空该项目现有 shots, 按顺序写入新批次. 返回写入条数.
+) -> list[dict]:
+    """清空该项目现有 shots, 按顺序写入新批次. 返回写入的 shot id 列表.
 
     字段映射: title/shot_type/duration_ms/dialog/bg_style → 列;
     description 无对应列, 连同 style 落入 metadata jsonb。
     """
     pid = uuidlib.UUID(project_id)
+    inserted: list[dict] = []
     async with team_ctx(team_id, user_id) as conn:
         await conn.execute("DELETE FROM shots WHERE project_id = $1", pid)
         for idx, shot in enumerate(shots):
@@ -50,10 +51,11 @@ async def replace_project_shots(
             desc = _as_str(shot.get("description"))
             if desc:
                 meta["description"] = desc
-            await conn.execute(
+            row = await conn.fetchrow(
                 """INSERT INTO shots
                      (project_id, order_index, title, shot_type, duration_ms, dialog, bg_style, metadata)
-                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)""",
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+                RETURNING id, order_index""",
                 pid,
                 idx,
                 _as_str(shot.get("title")),
@@ -63,7 +65,8 @@ async def replace_project_shots(
                 _as_str(shot.get("bg_style")),
                 json.dumps(meta, ensure_ascii=False),
             )
-    return sum(1 for s in shots if isinstance(s, dict))
+            inserted.append({"id": str(row["id"]), "order_index": int(row["order_index"])})
+    return inserted
 
 
 async def get_shot(*, team_id: str, user_id: str, shot_id: str) -> dict | None:

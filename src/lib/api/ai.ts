@@ -70,6 +70,7 @@ export interface StoryboardGenerateInput {
   style?: string;
   shot_ids?: string[];
   regenerate_all?: boolean;
+  with_images?: boolean;
 }
 
 export interface AiTaskResponse {

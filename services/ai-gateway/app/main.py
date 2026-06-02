@@ -10,6 +10,7 @@ from fastapi.responses import PlainTextResponse
 from .config import get_settings
 from .db import apply_migrations, close_pool, init_pool
 from .routes.ai import router as ai_router
+from .routes.admin import router as admin_router
 
 logger = logging.getLogger("ai-gateway")
 logging.basicConfig(level=logging.INFO)
@@ -44,6 +45,7 @@ app.add_middleware(
 )
 
 app.include_router(ai_router, prefix="/v1/ai")
+app.include_router(admin_router, prefix="/v1/admin")
 
 
 @app.get("/healthz", response_class=PlainTextResponse)

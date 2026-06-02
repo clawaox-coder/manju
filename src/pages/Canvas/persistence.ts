@@ -6,6 +6,7 @@
 // 兼容性:旧 schema(nodes/edges full state)亦能读出 position(用于平滑迁移)。
 
 const STORAGE_PREFIX = 'manju.canvas.';
+export const USER_ARROW_META_KEY = 'manjuUserArrow';
 
 export interface PositionRecord {
   x: number;
@@ -14,7 +15,20 @@ export interface PositionRecord {
   h?: number;
 }
 
+export interface UserArrowRecord {
+  id: string;
+  from: string;
+  to: string;
+}
+
 interface PositionsSchema {
+  v: 3;
+  savedAt: string;
+  positions: Array<{ id: string } & PositionRecord>;
+  userArrows: UserArrowRecord[];
+}
+
+interface PositionsSchemaV2 {
   v: 2;
   savedAt: string;
   positions: Array<{ id: string } & PositionRecord>;
@@ -25,25 +39,49 @@ interface LegacySchema {
   nodes?: Array<{ id: string; position?: { x: number; y: number } }>;
 }
 
-export function loadCanvasPositions(projectId: string): Map<string, PositionRecord> | null {
-  const raw = localStorage.getItem(STORAGE_PREFIX + projectId);
+function getStorageKey(projectId: string): string {
+  return STORAGE_PREFIX + projectId;
+}
+
+function emptySchema(): PositionsSchema {
+  return {
+    v: 3,
+    savedAt: new Date().toISOString(),
+    positions: [],
+    userArrows: [],
+  };
+}
+
+function parseSchema(projectId: string): PositionsSchema | null {
+  const raw = localStorage.getItem(getStorageKey(projectId));
   if (!raw) return null;
   try {
-    const parsed = JSON.parse(raw) as PositionsSchema | LegacySchema;
-    const map = new Map<string, PositionRecord>();
-
-    if ('v' in parsed && parsed.v === 2) {
-      for (const p of parsed.positions) {
-        map.set(p.id, { x: p.x, y: p.y, w: p.w, h: p.h });
-      }
-      return map;
+    const parsed = JSON.parse(raw) as PositionsSchema | PositionsSchemaV2 | LegacySchema;
+    if ('v' in parsed && parsed.v === 3) {
+      return {
+        v: 3,
+        savedAt: parsed.savedAt,
+        positions: Array.isArray(parsed.positions) ? parsed.positions : [],
+        userArrows: Array.isArray(parsed.userArrows) ? parsed.userArrows : [],
+      };
     }
-    // legacy v1: nodes[*].position
+    if ('v' in parsed && parsed.v === 2) {
+      return {
+        v: 3,
+        savedAt: parsed.savedAt,
+        positions: Array.isArray(parsed.positions) ? parsed.positions : [],
+        userArrows: [],
+      };
+    }
     if (Array.isArray((parsed as LegacySchema).nodes)) {
-      for (const n of (parsed as LegacySchema).nodes!) {
-        if (n.position) map.set(n.id, { x: n.position.x, y: n.position.y });
-      }
-      return map;
+      return {
+        v: 3,
+        savedAt: new Date().toISOString(),
+        positions: (parsed as LegacySchema).nodes!
+          .filter((n) => !!n.position)
+          .map((n) => ({ id: n.id, x: n.position!.x, y: n.position!.y })),
+        userArrows: [],
+      };
     }
     return null;
   } catch {
@@ -51,15 +89,41 @@ export function loadCanvasPositions(projectId: string): Map<string, PositionReco
   }
 }
 
-export function saveCanvasPositions(projectId: string, positions: Map<string, PositionRecord>): void {
+function saveSchema(projectId: string, patch: Partial<PositionsSchema>): void {
+  const prev = parseSchema(projectId) ?? emptySchema();
   const payload: PositionsSchema = {
-    v: 2,
+    ...prev,
+    ...patch,
+    v: 3,
     savedAt: new Date().toISOString(),
-    positions: Array.from(positions.entries()).map(([id, r]) => ({ id, ...r })),
   };
   try {
-    localStorage.setItem(STORAGE_PREFIX + projectId, JSON.stringify(payload));
+    localStorage.setItem(getStorageKey(projectId), JSON.stringify(payload));
   } catch {
     // localStorage 满 / 隐私模式禁用 → 静默(不影响渲染)
   }
+}
+
+export function loadCanvasPositions(projectId: string): Map<string, PositionRecord> | null {
+  const parsed = parseSchema(projectId);
+  if (!parsed) return null;
+  const map = new Map<string, PositionRecord>();
+  for (const p of parsed.positions) {
+    map.set(p.id, { x: p.x, y: p.y, w: p.w, h: p.h });
+  }
+  return map;
+}
+
+export function saveCanvasPositions(projectId: string, positions: Map<string, PositionRecord>): void {
+  saveSchema(projectId, {
+    positions: Array.from(positions.entries()).map(([id, r]) => ({ id, ...r })),
+  });
+}
+
+export function loadUserArrows(projectId: string): UserArrowRecord[] {
+  return parseSchema(projectId)?.userArrows ?? [];
+}
+
+export function saveUserArrows(projectId: string, userArrows: UserArrowRecord[]): void {
+  saveSchema(projectId, { userArrows });
 }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, Link } from 'react-router-dom';
-import { Tldraw, useEditor, createShapeId, useValue } from 'tldraw';
+import { Tldraw, useEditor, createShapeId, useValue, getArrowBindings } from 'tldraw';
 import 'tldraw/tldraw.css';
 import { Sparkles, FolderOpen, ArrowLeft } from 'lucide-react';
 import { ChatPanel } from './chat/ChatPanel';
@@ -22,7 +22,14 @@ import { createRender, getRender } from '@/lib/api/render';
 import { buildCanvasGraph } from './buildGraph';
 import { ManjuNodeUtil, MANJU_NODE_SIZE, type ManjuNodeType, type ManjuNodeProps } from './canvas/ManjuNodeUtil';
 import { NodeOptimizePanel } from './NodeOptimizePanel';
-import { saveCanvasPositions, type PositionRecord } from './persistence';
+import {
+  loadUserArrows,
+  saveCanvasPositions,
+  saveUserArrows,
+  USER_ARROW_META_KEY,
+  type PositionRecord,
+  type UserArrowRecord,
+} from './persistence';
 
 const MANJU_SHAPE_UTILS = [ManjuNodeUtil];
 
@@ -150,6 +157,39 @@ function stripShapePrefix(shapeId: string): string {
   return shapeId.replace(/^shape:/, '');
 }
 
+type ArrowShapeView = {
+  id: string;
+  type: string;
+  isLocked?: boolean;
+  meta?: Record<string, unknown>;
+};
+
+type ManjuShapeView = {
+  id: string;
+  type: string;
+  x: number;
+  y: number;
+  props: { w?: number; h?: number };
+};
+
+function isUserArrowShape(shape: ArrowShapeView | undefined): boolean {
+  if (!shape || shape.type !== 'arrow' || shape.isLocked) return false;
+  return shape.meta?.[USER_ARROW_META_KEY] === true;
+}
+
+function getUserArrowRecord(editor: ReturnType<typeof useEditor>, shapeId: string): UserArrowRecord | null {
+  const arrow = editor.getShape(createShapeId(shapeId)) as unknown as ArrowShapeView | undefined;
+  if (!isUserArrowShape(arrow)) return null;
+  const bindings = getArrowBindings(editor, arrow as never);
+  const fromId = bindings.start?.toId ? stripShapePrefix(String(bindings.start.toId)) : null;
+  const toId = bindings.end?.toId ? stripShapePrefix(String(bindings.end.toId)) : null;
+  if (!fromId || !toId || fromId === toId) return null;
+  const fromShape = editor.getShape(bindings.start!.toId) as unknown as ArrowShapeView | undefined;
+  const toShape = editor.getShape(bindings.end!.toId) as unknown as ArrowShapeView | undefined;
+  if (fromShape?.type !== 'manjuNode' || toShape?.type !== 'manjuNode') return null;
+  return { id: shapeId, from: fromId, to: toId };
+}
+
 
 // 把 graph 同步成 tldraw 自定义 manjuNode + bound arrow 连线。
 // canvas-node-edit-layout:节点可由用户拖动 / 缩放,持久化经 store.listen + debounce 落 localStorage。
@@ -168,6 +208,7 @@ function CanvasSync({
   const selectedShapeIds = useValue('selectedShapeIds', () => editor.getSelectedShapeIds().map((id) => String(id)), [editor]);
   const lastSelectedRef = useRef<string | null>(null);
   const effectiveTheme = useEffectiveTheme();
+  const restoredUserArrowsForProjectRef = useRef<string | null>(null);
 
   // 把有效明暗主题同步给 Tldraw 自己的 colorScheme，否则画布区不跟随 .dark。
   // 系统偏好监听由 useEffectiveTheme 统一处理，此处只消费结果。
@@ -208,7 +249,7 @@ function CanvasSync({
         }
       }
 
-      // 连线：为每条 edge 建一条两端 bound 到源/目标节点的 arrow（只建一次）。
+    // 连线：为每条 edge 建一条两端 bound 到源/目标节点的 arrow（只建一次）。
       for (const edge of graph.edges) {
         if (syncedEdgesRef.current.has(edge.id)) continue;
         if (!currentIds.has(edge.source) || !currentIds.has(edge.target)) continue;
@@ -223,20 +264,39 @@ function CanvasSync({
         editor.updateShape({ id: arrowId, isLocked: true, type: 'arrow' } as unknown as Parameters<typeof editor.updateShape>[0]);
         syncedEdgesRef.current.add(edge.id);
       }
+
+      if (projectId && restoredUserArrowsForProjectRef.current !== projectId) {
+        const savedUserArrows = loadUserArrows(projectId);
+        for (const userArrow of savedUserArrows) {
+          if (!currentIds.has(userArrow.from) || !currentIds.has(userArrow.to) || userArrow.from === userArrow.to) continue;
+          const arrowId = createShapeId(userArrow.id);
+          if (editor.getShape(arrowId)) continue;
+          editor.createShape({
+            id: arrowId,
+            type: 'arrow',
+            x: 0,
+            y: 0,
+            meta: { [USER_ARROW_META_KEY]: true },
+          } as unknown as Parameters<typeof editor.createShape>[0]);
+          editor.createBindings([
+            { fromId: arrowId, toId: createShapeId(userArrow.from), type: 'arrow',
+              props: { terminal: 'start', normalizedAnchor: { x: 0.5, y: 0.5 }, isExact: false, isPrecise: false } },
+            { fromId: arrowId, toId: createShapeId(userArrow.to), type: 'arrow',
+              props: { terminal: 'end', normalizedAnchor: { x: 0.5, y: 0.5 }, isExact: false, isPrecise: false } },
+          ] as unknown as Parameters<typeof editor.createBindings>[0]);
+        }
+        restoredUserArrowsForProjectRef.current = projectId;
+      }
     });
 
     syncedRef.current = currentIds;
-  }, [editor, graph.nodes, graph.edges]);
+  }, [editor, graph.nodes, graph.edges, projectId]);
 
   // canvas-node-edit-layout:监听用户拖动 / 缩放节点,debounce 300ms 落 localStorage。
   // source: 'user' 过滤:只听用户操作,程序化 createShape/updateShape(本组件自己)不触发。
   const saveTimerRef = useRef<number | null>(null);
   useEffect(() => {
     if (!editor || !projectId) return;
-    // tldraw v5 类型坑:TLShape 是封闭联合,自定义 shape 'manjuNode' 不在其中,
-    // getShape 返 union 后 narrow 到 never。读 type/x/y/props 须 cast(与 createShape/
-    // updateShape 调用点的 `as unknown as` 同模式,见 ManjuNodeUtil 头注释)。
-    type ManjuShapeView = { type: string; x: number; y: number; props: { w?: number; h?: number } };
     const flush = () => {
       saveTimerRef.current = null;
       const map = new Map<string, PositionRecord>();
@@ -263,6 +323,68 @@ function CanvasSync({
     );
     return () => {
       if (saveTimerRef.current != null) clearTimeout(saveTimerRef.current);
+      unsubscribe();
+    };
+  }, [editor, projectId]);
+
+  const saveUserArrowsTimerRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!editor || !projectId) return;
+    const flush = () => {
+      saveUserArrowsTimerRef.current = null;
+      const rows: UserArrowRecord[] = [];
+      for (const id of editor.getCurrentPageShapeIds()) {
+        const shape = editor.getShape(id) as unknown as ArrowShapeView | undefined;
+        if (!shape || shape.type !== 'arrow' || shape.isLocked) continue;
+        const shapeId = stripShapePrefix(String(id));
+        const nextMeta = { ...(shape.meta ?? {}), [USER_ARROW_META_KEY]: true };
+        if (shape.meta?.[USER_ARROW_META_KEY] !== true) {
+          editor.updateShape({
+            id,
+            type: 'arrow',
+            meta: nextMeta,
+          } as unknown as Parameters<typeof editor.updateShape>[0]);
+        }
+        const record = getUserArrowRecord(editor, shapeId);
+        if (!record) {
+          const bindings = getArrowBindings(editor, shape as never);
+          const fromId = bindings.start?.toId ? stripShapePrefix(String(bindings.start.toId)) : null;
+          const toId = bindings.end?.toId ? stripShapePrefix(String(bindings.end.toId)) : null;
+          if (fromId && toId && fromId === toId) {
+            editor.deleteShape(id);
+          }
+          continue;
+        }
+        rows.push(record);
+      }
+      saveUserArrows(projectId, rows);
+    };
+    const unsubscribe = editor.store.listen(
+      (entry) => {
+        const added = Object.values(entry.changes.added as Record<string, unknown>).some((item) => {
+          const shape = item as { typeName?: string; type?: string; isLocked?: boolean };
+          return shape?.typeName === 'shape' && shape?.type === 'arrow' && !shape?.isLocked;
+        });
+        const updated = Object.values(entry.changes.updated as Record<string, [unknown, unknown]>).some((pair) => {
+          const before = pair[0] as { typeName?: string; type?: string; isLocked?: boolean };
+          const after = pair[1] as { typeName?: string; type?: string; isLocked?: boolean };
+          return (before?.typeName === 'shape' && before?.type === 'arrow' && !before?.isLocked)
+            || (after?.typeName === 'shape' && after?.type === 'arrow' && !after?.isLocked);
+        });
+        const removed = Object.values(entry.changes.removed as Record<string, unknown>).some((item) => {
+          const shape = item as { typeName?: string; type?: string; isLocked?: boolean; meta?: Record<string, unknown> };
+          return shape?.typeName === 'shape'
+            && shape?.type === 'arrow'
+            && (!shape?.isLocked || shape?.meta?.[USER_ARROW_META_KEY] === true);
+        });
+        if (!added && !updated && !removed) return;
+        if (saveUserArrowsTimerRef.current != null) clearTimeout(saveUserArrowsTimerRef.current);
+        saveUserArrowsTimerRef.current = window.setTimeout(flush, 300);
+      },
+      { source: 'user', scope: 'document' },
+    );
+    return () => {
+      if (saveUserArrowsTimerRef.current != null) clearTimeout(saveUserArrowsTimerRef.current);
       unsubscribe();
     };
   }, [editor, projectId]);

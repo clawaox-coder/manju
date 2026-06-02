@@ -70,3 +70,67 @@ async def consume(*, team_id: str, user_id: str, month_yymm: str) -> int:
             month_yymm,
         )
     return int(row["used"]) if row else 0
+
+
+async def get_month(*, team_id: str, user_id: str, month_yymm: str) -> dict | None:
+    tid = uuidlib.UUID(team_id)
+    async with team_ctx(team_id, user_id) as conn:
+        row = await conn.fetchrow(
+            """SELECT month_yymm, used, "limit", updated_at
+                 FROM ai_image_quota
+                WHERE team_id = $1 AND month_yymm = $2""",
+            tid,
+            month_yymm,
+        )
+    if row is None:
+        return None
+    return {
+        "month_yymm": row["month_yymm"],
+        "used": int(row["used"]),
+        "limit": int(row["limit"]),
+        "updated_at": row["updated_at"],
+    }
+
+
+async def list_by_team(*, team_id: str, user_id: str) -> list[dict]:
+    tid = uuidlib.UUID(team_id)
+    async with team_ctx(team_id, user_id) as conn:
+        rows = await conn.fetch(
+            """SELECT month_yymm, used, "limit", updated_at
+                 FROM ai_image_quota
+                WHERE team_id = $1
+             ORDER BY month_yymm DESC""",
+            tid,
+        )
+    return [
+        {
+            "month_yymm": row["month_yymm"],
+            "used": int(row["used"]),
+            "limit": int(row["limit"]),
+            "updated_at": row["updated_at"],
+        }
+        for row in rows
+    ]
+
+
+async def update_limit(*, team_id: str, user_id: str, month_yymm: str, new_limit: int) -> dict:
+    if new_limit < 0:
+        raise ValueError("limit must be >= 0")
+    tid = uuidlib.UUID(team_id)
+    async with team_ctx(team_id, user_id) as conn:
+        row = await conn.fetchrow(
+            """INSERT INTO ai_image_quota (team_id, month_yymm, used, "limit")
+                 VALUES ($1, $2, 0, $3)
+               ON CONFLICT (team_id, month_yymm)
+               DO UPDATE SET "limit" = EXCLUDED."limit", updated_at = now()
+             RETURNING month_yymm, used, "limit", updated_at""",
+            tid,
+            month_yymm,
+            new_limit,
+        )
+    return {
+        "month_yymm": row["month_yymm"],
+        "used": int(row["used"]),
+        "limit": int(row["limit"]),
+        "updated_at": row["updated_at"],
+    }
