@@ -21,6 +21,7 @@ import { voiceMatch, streamScriptContinue, storyboardGenerate, getAiTask, chat, 
 import { createRender, getRender } from '@/lib/api/render';
 import { buildCanvasGraph } from './buildGraph';
 import { ManjuNodeUtil, MANJU_NODE_SIZE, type ManjuNodeType, type ManjuNodeProps } from './canvas/ManjuNodeUtil';
+import { NodeOptimizePanel } from './NodeOptimizePanel';
 
 const MANJU_SHAPE_UTILS = [ManjuNodeUtil];
 
@@ -257,6 +258,9 @@ function CanvasInner() {
   const titleGenStartedRef = useRef(false);
   const [loading, setLoading] = useState(false);
   const [assetPanelOpen, setAssetPanelOpen] = useState(false);
+  // 被点中的节点 → 渲染单节点优化面板。P5 完成后会取代 handleNodeClick 里的全局对话注入;
+  // P2 阶段并存:点节点同时设此 state(开面板)和走原 focus turn(保留全局对话),降合并风险。
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   // 从聊天框拖拽/粘贴/选择的参考图：暂存待上传，打开上传弹窗。
   const [pendingImage, setPendingImage] = useState<File | null>(null);
   const editorRef = useRef<ReturnType<typeof useEditor> | null>(null);
@@ -530,8 +534,9 @@ function CanvasInner() {
     }
   }, [projectId, sm, runScriptGen, runStoryboardGen, runVoiceMatch, runRender]);
 
-  // 点选画布节点 → 记录聚焦目标，并发起一轮带 focus 上下文的对话（不再写死台词）。
+  // 点选画布节点 → 开单节点优化面板（P2 阶段并存：仍保留原 focus turn，P5 移除）。
   const handleNodeClick = useCallback((nodeId: string) => {
+    setSelectedNodeId(nodeId);
     sm.focusNode(nodeId);
     syncState();
     setMessages((m) => [...m, makeSystemMessage(`📍 聚焦：${nodeId}`)]);
@@ -637,6 +642,13 @@ function CanvasInner() {
         <Tldraw hideUi shapeUtils={MANJU_SHAPE_UTILS} onMount={(editor) => { editorRef.current = editor; }}>
           <CanvasSync graph={graph} onNodeSelect={handleNodeClick} />
           <CanvasToolbar />
+          {selectedNodeId && (
+            <NodeOptimizePanel
+              key={selectedNodeId}
+              nodeId={selectedNodeId}
+              onClose={() => setSelectedNodeId(null)}
+            />
+          )}
         </Tldraw>
         <AssetLibraryPanel
           open={assetPanelOpen}
