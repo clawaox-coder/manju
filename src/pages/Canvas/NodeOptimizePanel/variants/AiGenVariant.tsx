@@ -30,6 +30,7 @@ export function AiGenVariant({ projectId }: Props) {
   const confirm = useConfirm();
   const [style, setStyle] = useState('');
   const [running, setRunning] = useState(false);
+  const [withImages, setWithImages] = useState(true);
 
   const doGenerate = async () => {
     setRunning(true);
@@ -38,6 +39,7 @@ export function AiGenVariant({ projectId }: Props) {
         project_id: projectId,
         style: style.trim() || 'default',
         regenerate_all: true,
+        with_images: withImages,
       });
       const ok = await pollUntilTerminal(res.task_id);
       if (!ok) throw new Error('生成失败或超时');
@@ -54,7 +56,9 @@ export function AiGenVariant({ projectId }: Props) {
     if (running) return;
     confirm({
       title: '重新生成全部分镜?',
-      message: '这会替换当前全部分镜的内容。',
+      message: withImages
+        ? '这会替换当前全部分镜的内容，并额外消耗约 3-6 张图像配额。'
+        : '这会替换当前全部分镜的内容。',
       okText: '生成',
       danger: true,
       onConfirm: () => { void doGenerate(); },
@@ -81,6 +85,24 @@ export function AiGenVariant({ projectId }: Props) {
             disabled={running}
           />
         </div>
+      </div>
+
+      <div className="px-3.5 py-3 border-b border-border">
+        <label className="flex items-start gap-2 text-[12px] text-foreground cursor-pointer">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={withImages}
+            onChange={(e) => setWithImages(e.target.checked)}
+            disabled={running}
+          />
+          <span>
+            顺带为每镜生成画面
+            <span className="block text-[11px] text-muted-foreground mt-1">
+              开启后会按镜头数量消耗图像配额，通常约 3-6 张。
+            </span>
+          </span>
+        </label>
       </div>
 
       <div className="px-3.5 py-3">

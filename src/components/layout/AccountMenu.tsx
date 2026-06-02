@@ -13,6 +13,7 @@ import { useStore } from '@/store';
 import { useConfirm } from '@/hooks/useConfirm';
 import { clearTokens } from '@/lib/api/tokens';
 import { toast } from 'sonner';
+import { useMe } from '@/hooks/useAuthApi';
 
 interface MenuLink {
   to: string;
@@ -33,6 +34,7 @@ export function AccountMenu() {
   const confirm = useConfirm();
   const profile = useStore((s) => s.profile);
   const billing = useStore((s) => s.billing);
+  const { data: me } = useMe();
 
   const handleLogout = () => {
     confirm({
@@ -86,6 +88,12 @@ export function AccountMenu() {
             </DropdownMenuItem>
           );
         })}
+        {me?.team?.role === 'owner' && (
+          <DropdownMenuItem onClick={() => navigate('/admin/image-quota')} className="cursor-pointer">
+            <Wallet className="w-4 h-4" />
+            图像配额管理
+          </DropdownMenuItem>
+        )}
         <DropdownMenuSeparator />
         <DropdownMenuItem variant="destructive" onClick={handleLogout} className="cursor-pointer">
           <LogOut className="w-4 h-4" />

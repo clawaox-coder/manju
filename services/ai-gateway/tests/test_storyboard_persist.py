@@ -46,7 +46,7 @@ async def test_storyboard_persists_shots(client, harness, clean_tables, monkeypa
     )
     await ai_svc.storyboard_generate_async(
         team_id=t.team_id, user_id=t.owner_id, project_id=t.project_id,
-        style="日系动漫", shot_ids=None, regenerate_all=True, task_id=str(task.id),
+        style="日系动漫", shot_ids=None, regenerate_all=True, with_images=False, task_id=str(task.id),
     )
 
     done = await tasks_repo.get_task(team_id=t.team_id, user_id=t.owner_id, task_id=str(task.id))
@@ -80,7 +80,7 @@ async def test_storyboard_regenerate_replaces(client, harness, clean_tables, mon
         )
         await ai_svc.storyboard_generate_async(
             team_id=t.team_id, user_id=t.owner_id, project_id=t.project_id,
-            style="日系动漫", shot_ids=None, regenerate_all=True, task_id=str(task.id),
+            style="日系动漫", shot_ids=None, regenerate_all=True, with_images=False, task_id=str(task.id),
         )
     rows = await _count_shots(harness, t.project_id)
     assert len(rows) == 2  # not 4 — regenerate cleared the previous batch
@@ -98,7 +98,7 @@ async def test_storyboard_failed_when_unparseable(client, harness, clean_tables,
     )
     await ai_svc.storyboard_generate_async(
         team_id=t.team_id, user_id=t.owner_id, project_id=t.project_id,
-        style="日系动漫", shot_ids=None, regenerate_all=True, task_id=str(task.id),
+        style="日系动漫", shot_ids=None, regenerate_all=True, with_images=False, task_id=str(task.id),
     )
 
     done = await tasks_repo.get_task(team_id=t.team_id, user_id=t.owner_id, task_id=str(task.id))
