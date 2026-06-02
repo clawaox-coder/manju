@@ -4,6 +4,8 @@ import { resolveNodeEntity, type NodeEntity } from '../nodeEntity';
 import { ScriptSceneVariant } from './variants/ScriptSceneVariant';
 import { ShotVariant } from './variants/ShotVariant';
 import { CharacterVariant } from './variants/CharacterVariant';
+import { AiGenVariant } from './variants/AiGenVariant';
+import { VideoOutVariant } from './variants/VideoOutVariant';
 import { PlaceholderVariant } from './variants/PlaceholderVariant';
 
 export interface NodeOptimizePanelProps {
@@ -65,8 +67,9 @@ function NodeContent({ entity, projectId, onClose }: { entity: NodeEntity; proje
     case 'character':
       return <CharacterVariant assetId={entity.assetId} projectId={projectId} />;
     case 'hub-ai':
+      return <AiGenVariant projectId={projectId} />;
     case 'hub-video':
-      return <PlaceholderVariant text="枢纽节点整体动作即将上线(P4)。" />;
+      return <VideoOutVariant projectId={projectId} />;
     default:
       return <PlaceholderVariant text="该节点暂不支持优化。" />;
   }
