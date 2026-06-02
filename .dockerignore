@@ -1,0 +1,12 @@
+# 前端镜像(build context = 仓库根)构建只需 src/public/配置，排除其余以避免污染镜像、加速构建
+node_modules
+dist
+.git
+.github
+services
+e2e
+docs
+openspec
+scripts
+*.log
+.DS_Store
