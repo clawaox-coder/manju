@@ -1,6 +1,7 @@
 import type { ScriptDTO, ShotDTO } from '@/lib/api/scripts';
 import type { AssetDTO } from '@/lib/api/assets';
 import { loadCanvasPositions } from './persistence';
+import { splitScenes } from './sceneSplit';
 
 export interface CanvasNode {
   id: string;
@@ -18,31 +19,6 @@ export interface CanvasEdge {
   animated?: boolean;
   style?: Record<string, string | number>;
   markerEnd?: { type: string };
-}
-
-function parseScenes(content: string): { title: string; content: string }[] {
-  const lines = content.split('\n');
-  const scenes: { title: string; content: string }[] = [];
-  let current: { title: string; lines: string[] } | null = null;
-
-  for (const line of lines) {
-    const heading = line.match(/^#{1,3}\s+(.+)/);
-    if (heading) {
-      if (current) scenes.push({ title: current.title, content: current.lines.join('\n').trim() });
-      current = { title: heading[1], lines: [] };
-    } else if (current) {
-      current.lines.push(line);
-    } else {
-      if (!scenes.length && line.trim()) {
-        current = { title: '场景 1', lines: [line] };
-      }
-    }
-  }
-  if (current) scenes.push({ title: current.title, content: current.lines.join('\n').trim() });
-  if (!scenes.length && content.trim()) {
-    scenes.push({ title: '剧本', content: content.slice(0, 200) });
-  }
-  return scenes;
 }
 
 function formatDuration(ms: number): string {
@@ -63,7 +39,7 @@ export function buildCanvasGraph(
   const nodes: CanvasNode[] = [];
   const edges: CanvasEdge[] = [];
 
-  const scenes = script ? parseScenes(script.content) : [];
+  const scenes = script ? splitScenes(script.content) : [];
   const shotList = shots ?? [];
   const charList = (characters ?? []).slice(0, 6);
 

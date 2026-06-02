@@ -5,18 +5,18 @@ P4(枢纽节点)可与 P3 并行;P0 可提前。
 
 ## P0. 暖身:契约与类型(低风险,先做)
 
-- [ ] P0.1 定「场景切分契约」:把前端 `parseScenes`(`/^#{1,3}\s+/` + 首段无标题归场景 1)整理成明确规则文档 + 一组样例(content → scenes[]),供前后端各自实现对齐
-- [ ] P0.2 `src/lib/api/ai.ts`:声明三个专门优化接口的 TS 类型与 client 函数签名(`rewriteScene` / `optimizeShot` / `optimizeCharacter`),先打桩
-- [ ] P0.3 定义节点 → 实体解析:`nodeId`(`script-{i}` / `char-{id}` / `shot-{id}` / `ai-gen` / `video-out`)→ `{ kind, entityRef }` 的纯函数 + 单测
+- [x] P0.1 定「场景切分契约」:把前端 `parseScenes`(`/^#{1,3}\s+/` + 首段无标题归场景 1)整理成明确规则文档 + 一组样例(content → scenes[]),供前后端各自实现对齐 — 抽出 `src/pages/Canvas/sceneSplit.ts` + `sceneSplit.test.ts`(5 样例锁定),buildGraph 已切换
+- [x] P0.2 `src/lib/api/ai.ts`:声明三个专门优化接口的 TS 类型与 client 函数签名(`rewriteScene` / `optimizeShot` / `optimizeCharacter`),先打桩 — 已加,走 request() 期望 { data } 信封
+- [x] P0.3 定义节点 → 实体解析:`nodeId`(`script-{i}` / `char-{id}` / `shot-{id}` / `ai-gen` / `video-out`)→ `{ kind, entityRef }` 的纯函数 + 单测 — `src/pages/Canvas/nodeEntity.ts` + `nodeEntity.test.ts`(6 用例)
 
 ## P1. 后端:专门优化端点(全栈关键前置)
 
-- [ ] P1.1 ai-gateway `POST /v1/ai/shot/optimize` `{ project_id, shot_id, instruction, ref_image_url?, mode: text|image|both }`:text → 改对白(写 script-service `updateShot`);image → 重画这一镜(复用既有分镜生成,scope=单 shot);both → 两者
-- [ ] P1.2 ai-gateway `POST /v1/ai/script/rewrite-scene` `{ project_id, scene_index, instruction }`:取 script → 按 P0.1 规则定位该场 → LLM 仅重写该场 → 拼回 → `updateScript`(带取到的 `version_no`,乐观校验)→ 冲突返 409
-- [ ] P1.3 ai-gateway `POST /v1/ai/character/optimize` `{ project_id, asset_id, instruction }`:LLM 改写该角色 `description` / 设定 → `updateAsset`(character)
-- [ ] P1.4 三端点共享「取上下文 → LLM → 落库」骨架 + 统一错误信封(对齐 `api.md#error-codes`);**不复用 `chat_respond`**
-- [ ] P1.5 后端单测:`rewrite-scene` 仅改目标场(其它场不变)、版本冲突返 409、`scene_index` 越界返 4xx;`shot/optimize` 三种 mode 路径
-- [ ] P1.6 验证:curl 三端点,确认各自只动目标实体、错误码规范
+- [x] P1.1 ai-gateway `POST /v1/ai/shot/optimize`:text → LLM 改这一镜对白 → 直写 shots(`update_shot_dialog`)。**image/both → 501(后端无图像生成,二期)**——实现暴露:storyboard 仅产文本、`image_url` 无人写。
+- [x] P1.2 ai-gateway `POST /v1/ai/script/rewrite-scene`:取 script(直读共享库)→ 按场景切分契约定位该场 → LLM 仅重写该场 → `replace_scene` 原子拼回 → 乐观版本写回 → 冲突返 409。**直写共享库(非 HTTP 调 script-service)**,与 repo/shots.py 同模式。
+- [x] P1.3 ai-gateway `POST /v1/ai/character/optimize`:LLM 改写角色 `description` → 直写 assets(`update_asset_description`);非角色 → 400。
+- [x] P1.4 三端点共享 `_run_and_record`(取上下文→LLM→记 ai_tasks)+ `HTTPException` 错误信封;**完全不碰 `chat_respond`/对话接口**。顺手修复 `routes/ai.py` 既存 bug:`TTSRequest` 类丢失致 import 时 NameError(CI 未 import routes 故未暴露)。
+- [x] P1.5 后端单测:`tests/test_scene_split.py`(8,切分+精准替换+边界)+ `tests/test_node_optimize.py`(11,mode 501/越界 400/冲突 409/仅改目标场/404)= 19 passed;`app.main` 干净导入、三路由注册;ruff clean。
+- [~] P1.6 验证:无 `ANTHROPIC_API_KEY`,真 LLM 往返的 curl 走查留待带 key 环境/CI integration;非 LLM 逻辑(定位/版本/错误码/隔离)已由 import + 19 单测覆盖。
 
 ## P2. 前端:面板外壳 + 锚定(依赖 P0.3)
 

@@ -399,7 +399,6 @@ async def storyboard_generate_async(
 ) -> None:
     """后台跑分镜生成. 由 BackgroundTasks 调度, 错误自己消化 (写 ai_tasks.error)."""
     from uuid import UUID as _UUID
-    s = get_settings()
 
     # 取项目角色参考图(失败/无图均返回空 → 降级纯文本, 不阻断)
     ref_images = await _fetch_project_reference_images(project_id, team_id, role="character_ref")
@@ -856,3 +855,126 @@ async def edit_auto(
         max_tokens=1500, parse_json=True,
     )
     return result
+
+
+# ---- 9. 单节点优化(canvas-node-optimize-panel): 专门端点,不复用 chat_respond ----
+# 三者都走 _run_and_record(parse_json=False) 拿 LLM 文本, 再直写共享库(team_ctx)。
+# 仅文本类优化可用:图像重生成(分镜重画/角色头像)需图像模型,本项目未接入 → 二期。
+
+REWRITE_SCENE_SYSTEM = """你是短剧编剧 AI。用户要优化剧本里的「某一场」。
+只重写这一场的正文,保持与全剧风格一致。严格要求:
+- 只输出这一场的正文本身,不要场景标题,不要编号,不要任何解释或 markdown 代码块。
+- 不要输出其它场的内容。"""
+
+SHOT_DIALOG_SYSTEM = """你是分镜对白 AI。用户要优化「某一镜」的对白。
+只输出这一镜修改后的对白纯文本,不要镜号/标题/解释/引号包裹。"""
+
+CHARACTER_SYSTEM = """你是角色设定 AI。用户要优化「某个角色」的设定/描述。
+只输出修改后的角色描述纯文本,不要名字前缀/解释/markdown。"""
+
+
+def _text_of(result: Any) -> str:
+    return (result.get("text") if isinstance(result, dict) else str(result)).strip()
+
+
+async def rewrite_scene(
+    *, team_id: str, user_id: str, project_id: str, scene_index: int, instruction: str,
+) -> dict:
+    """精准单场重写:定位该场 → LLM 仅重写该场 → 原子替换 → 乐观版本写回。"""
+    from ..repo import scripts as scripts_repo
+    from ..scene_split import replace_scene, split_scenes
+
+    script = await scripts_repo.get_script(team_id=team_id, user_id=user_id, project_id=project_id)
+    if script is None:
+        raise HTTPException(status_code=404, detail={"code": "SCRIPT_NOT_FOUND", "message": "该项目还没有剧本"})
+    scenes = split_scenes(script["content"])
+    if scene_index < 0 or scene_index >= len(scenes):
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "SCENE_INDEX_OUT_OF_RANGE", "message": f"scene_index {scene_index} 越界(共 {len(scenes)} 场)"},
+        )
+    target = scenes[scene_index]
+    prompt = (
+        f"全剧共 {len(scenes)} 场。要优化第 {scene_index + 1} 场「{target.title}」。\n\n"
+        f"这一场当前正文:\n{target.content}\n\n"
+        f"---\n优化指令: {instruction}\n\n只输出这一场修改后的正文。"
+    )
+    result, _ = await _run_and_record(
+        team_id=team_id, user_id=user_id, project_id=project_id,
+        task_type="script.rewrite_scene", system=REWRITE_SCENE_SYSTEM,
+        prompt=prompt, max_tokens=2000, parse_json=False,
+    )
+    new_body = _text_of(result)
+    if not new_body:
+        raise HTTPException(status_code=502, detail={"code": "AI_EMPTY_RESULT", "message": "AI 返回为空"})
+    new_content = replace_scene(script["content"], scene_index, new_body)
+    new_version = await scripts_repo.update_script_content(
+        team_id=team_id, user_id=user_id, project_id=project_id,
+        content=new_content, expected_version_no=script["version_no"],
+    )
+    if new_version is None:
+        raise HTTPException(status_code=409, detail={"code": "VERSION_CONFLICT", "message": "剧本已被改动,请刷新后重试"})
+    return {"content": new_content, "version_no": new_version}
+
+
+async def optimize_shot(
+    *, team_id: str, user_id: str, project_id: str, shot_id: str,
+    instruction: str, ref_image_url: str | None, mode: str,
+) -> dict:
+    """单镜优化:mode=text 改对白。image/both 需图像模型 → 501(二期)。"""
+    from ..repo import shots as shots_repo
+
+    if mode not in ("text", "image", "both"):
+        raise HTTPException(status_code=400, detail={"code": "INVALID_INPUT", "message": "mode 必须是 text|image|both"})
+    if mode in ("image", "both"):
+        raise HTTPException(
+            status_code=501,
+            detail={"code": "NOT_IMPLEMENTED", "message": "重画这一镜需图像模型,二期支持;当前仅支持 mode=text"},
+        )
+
+    shot = await shots_repo.get_shot(team_id=team_id, user_id=user_id, shot_id=shot_id)
+    if shot is None:
+        raise HTTPException(status_code=404, detail={"code": "SHOT_NOT_FOUND", "message": "分镜不存在"})
+    prompt = (
+        f"这一镜标题: {shot.get('title') or '(无)'}\n"
+        f"当前对白: {shot.get('dialog') or '(无)'}\n\n"
+        f"---\n优化指令: {instruction}\n\n只输出这一镜修改后的对白。"
+    )
+    result, _ = await _run_and_record(
+        team_id=team_id, user_id=user_id, project_id=project_id,
+        task_type="shot.optimize", system=SHOT_DIALOG_SYSTEM,
+        prompt=prompt, max_tokens=800, parse_json=False,
+    )
+    new_dialog = _text_of(result)
+    saved = await shots_repo.update_shot_dialog(team_id=team_id, user_id=user_id, shot_id=shot_id, dialog=new_dialog)
+    return {"shot_id": shot_id, "dialog": saved, "image_url": shot.get("image_url")}
+
+
+async def optimize_character(
+    *, team_id: str, user_id: str, project_id: str, asset_id: str, instruction: str,
+) -> dict:
+    """单角色优化:LLM 改写该角色设定/描述 → 写回该资产。"""
+    from ..repo import assets as assets_repo
+
+    asset = await assets_repo.get_character_asset(team_id=team_id, user_id=user_id, asset_id=asset_id)
+    if asset is None:
+        raise HTTPException(status_code=404, detail={"code": "ASSET_NOT_FOUND", "message": "角色资产不存在"})
+    if asset.get("type") != "character":
+        raise HTTPException(status_code=400, detail={"code": "INVALID_INPUT", "message": "该资产不是角色"})
+    prompt = (
+        f"角色名: {asset.get('name')}\n"
+        f"当前设定/描述: {asset.get('description') or '(无)'}\n\n"
+        f"---\n优化指令: {instruction}\n\n只输出修改后的角色描述。"
+    )
+    result, _ = await _run_and_record(
+        team_id=team_id, user_id=user_id, project_id=project_id,
+        task_type="character.optimize", system=CHARACTER_SYSTEM,
+        prompt=prompt, max_tokens=800, parse_json=False,
+    )
+    new_desc = _text_of(result)
+    saved = await assets_repo.update_asset_description(
+        team_id=team_id, user_id=user_id, asset_id=asset_id, description=new_desc,
+    )
+    if not saved:
+        raise HTTPException(status_code=404, detail={"code": "ASSET_NOT_FOUND", "message": "角色资产不存在或已删除"})
+    return {"asset_id": asset_id, "description": new_desc}
