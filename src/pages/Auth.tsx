@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import { register, login, forgotPassword } from '@/lib/api/auth';
+import { setTokens } from '@/lib/api/tokens';
 import { API_BASE_AUTH } from '@/lib/api/client';
 
 const fadeUp = {
@@ -72,6 +73,14 @@ export default function AuthPage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  // 仅开发环境(import.meta.env.DEV)：写入占位 token 绕过 RequireAuth 直接进入工作台，
+  // 用于后端未启动时本地预览页面。生产构建中 DEV 为 false，按钮与逻辑都不会出现。
+  function handleDevLogin() {
+    setTokens('dev-access-token', 'dev-refresh-token');
+    toast.success('已使用测试身份登录（开发模式）');
+    navigate('/home');
   }
 
   return (
@@ -208,6 +217,18 @@ export default function AuthPage() {
               </span>
             )}
           </div>
+
+          {import.meta.env.DEV && (
+            <div className="mt-4 border-t border-dashed border-border/60 pt-4">
+              <button
+                type="button"
+                onClick={handleDevLogin}
+                className="w-full rounded-lg border border-dashed border-amber-500/40 bg-amber-500/5 py-2 text-xs font-medium text-amber-600 transition-colors hover:bg-amber-500/10 dark:text-amber-400"
+              >
+                🔧 测试登录（开发用，跳过后端）
+              </button>
+            </div>
+          )}
         </Card>
       </motion.div>
     </div>

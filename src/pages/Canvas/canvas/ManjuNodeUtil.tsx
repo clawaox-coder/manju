@@ -51,7 +51,7 @@ export class ManjuNodeUtil extends ShapeUtil<any> {
 
   override getIndicatorPath(shape: ManjuNodeShape) {
     const path = new Path2D();
-    path.roundRect(0, 0, shape.props.w, shape.props.h, 12);
+    path.roundRect(0, 0, shape.props.w, shape.props.h, 8);
     return path;
   }
 }
