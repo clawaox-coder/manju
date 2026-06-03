@@ -1,14 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation, Link } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 import { Tldraw, useEditor, createShapeId, useValue, getArrowBindings } from 'tldraw';
 import 'tldraw/tldraw.css';
-import { Sparkles, FolderOpen, ArrowLeft } from 'lucide-react';
 import { ChatPanel } from './chat/ChatPanel';
 import { CanvasToolbar } from './CanvasToolbar';
 import { AssetLibraryPanel } from './AssetLibraryPanel';
 import { UploadDialog } from '@/components/domain/UploadDialog';
 import { linkProjectAsset, type AssetDTO } from '@/lib/api/assets';
-import { AccountMenu } from '@/components/layout/AccountMenu';
 import { AgentStateMachine } from './agent/AgentStateMachine';
 import { makeUserMessage, makeAiMessage, makeProgressMessage, makeErrorAction, makeSystemMessage, makeCardGroupMessage, makeMilestoneMessage } from './agent/AgentMessages';
 import type { ChatMessage, Stage } from './agent/types';
@@ -21,6 +19,9 @@ import { voiceMatch, streamScriptContinue, storyboardGenerate, getAiTask, chat, 
 import { createRender, getRender } from '@/lib/api/render';
 import { buildCanvasGraph } from './buildGraph';
 import { ManjuNodeUtil, MANJU_NODE_SIZE, type ManjuNodeType, type ManjuNodeProps } from './canvas/ManjuNodeUtil';
+import { getSystemArrowShape } from './canvas/arrowStyle';
+import { getConversationResetMessage } from './chat/sessionReset';
+import { WorkspaceRail } from './WorkspaceRail';
 import { NodeOptimizePanel } from './NodeOptimizePanel';
 import {
   loadUserArrows,
@@ -261,7 +262,11 @@ function CanvasSync({
           { fromId: arrowId, toId: createShapeId(edge.target), type: 'arrow',
             props: { terminal: 'end', normalizedAnchor: { x: 0.5, y: 0.5 }, isExact: false, isPrecise: false } },
         ] as unknown as Parameters<typeof editor.createBindings>[0]);
-        editor.updateShape({ id: arrowId, isLocked: true, type: 'arrow' } as unknown as Parameters<typeof editor.updateShape>[0]);
+        editor.updateShape({
+          id: arrowId,
+          type: 'arrow',
+          ...getSystemArrowShape(edge),
+        } as unknown as Parameters<typeof editor.updateShape>[0]);
         syncedEdgesRef.current.add(edge.id);
       }
 
@@ -715,6 +720,23 @@ function CanvasInner() {
     setPendingImage(file);
   }, []);
 
+  const handleNewConversation = useCallback(() => {
+    scriptCandidatesRef.current.clear();
+    busyRef.current = false;
+    setLoading(false);
+    setSelectedNodeId(null);
+    setPendingImage(null);
+    setAssetPanelOpen(false);
+
+    const hasScript = !!script?.content;
+    const hasShots = (shots?.length ?? 0) > 0;
+    sm.restore({ hasScript, hasShots, hasVoice: false, hasVideo: false });
+    syncState();
+
+    const next = getConversationResetMessage({ hasScript, hasShots });
+    setMessages([makeAiMessage(next.text, { stage: next.stage })]);
+  }, [script, shots, sm, syncState]);
+
   // 参考图上传成功 → 资产已创建，再把它以 character_ref 关联到当前项目
   // （这样生成时后端能按 project 拉到它喂模型）。react-query 失效 ['assets']
   // 自动刷新角色节点落画布；关联失败不阻断，仅提示。
@@ -766,7 +788,11 @@ function CanvasInner() {
     }
   }, [agentState.stage]);
   return (
-    <div className="h-screen flex">
+    <div className="h-screen flex bg-background">
+      <WorkspaceRail
+        onNewConversation={handleNewConversation}
+        onOpenAssets={() => setAssetPanelOpen(true)}
+      />
       <ChatPanel
         messages={messages}
         onSendMessage={handleSendMessage}
@@ -781,31 +807,6 @@ function CanvasInner() {
         onAttachImage={handleAttachImage}
       />
       <div className="flex-1 relative">
-        <div className="absolute top-4 left-4 z-[300] flex items-center gap-3">
-          <Link
-            to="/home"
-            title="返回首页"
-            className="group flex items-center gap-2 rounded-xl border border-border bg-background/80 backdrop-blur-sm px-3 py-2 shadow-sm hover:bg-accent transition"
-          >
-            <ArrowLeft className="w-4 h-4 text-muted-foreground group-hover:text-foreground transition-colors" />
-            <Sparkles className="w-4 h-4 text-primary" />
-            <span className="text-sm font-medium">漫剧AI</span>
-          </Link>
-          <span className="rounded-full border border-border bg-background/80 backdrop-blur-sm px-2.5 py-1 text-[11px] text-muted-foreground">
-            {projectName || '未命名项目'}
-          </span>
-        </div>
-        <div className="absolute top-4 right-4 z-[300] flex items-center rounded-xl border border-border bg-background/80 backdrop-blur-sm px-1.5 py-1 shadow-sm">
-          <AccountMenu />
-        </div>
-        <button
-          type="button"
-          onClick={() => setAssetPanelOpen(true)}
-          className="absolute top-4 left-1/2 -translate-x-1/2 z-[300] flex items-center gap-2 rounded-xl border border-border bg-background/80 backdrop-blur-sm px-3 py-2 shadow-sm text-sm hover:bg-accent transition"
-        >
-          <FolderOpen className="w-4 h-4 text-primary" />
-          资产库
-        </button>
         <Tldraw hideUi shapeUtils={MANJU_SHAPE_UTILS} onMount={(editor) => { editorRef.current = editor; }}>
           <CanvasSync graph={graph} projectId={projectId} onNodeSelect={handleNodeClick} />
           <CanvasToolbar />

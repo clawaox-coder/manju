@@ -11,6 +11,8 @@ function props(over: Partial<ManjuNodeProps>): ManjuNodeProps {
 describe('ManjuNode renderByType（画布节点语义渲染）', () => {
   it('script：显示编号 badge + 标题 + 正文', () => {
     render(renderByType(props({ nodeType: 'script', title: '开场', badge: '1', body: '主角登场，雨夜。' })));
+    expect(screen.getByText('剧本')).toBeInTheDocument();
+    expect(screen.getByLabelText('节点操作')).toBeInTheDocument();
     expect(screen.getByText('开场')).toBeInTheDocument();
     expect(screen.getByText('1')).toBeInTheDocument();
     expect(screen.getByText('主角登场，雨夜。')).toBeInTheDocument();
@@ -18,6 +20,7 @@ describe('ManjuNode renderByType（画布节点语义渲染）', () => {
 
   it('storyboard：有对白时显示对白，风格作 badge', () => {
     render(renderByType(props({ nodeType: 'storyboard', title: 'Shot 01', badge: '日系动漫', body: '「住手！」' })));
+    expect(screen.getByText('分镜')).toBeInTheDocument();
     expect(screen.getByText('Shot 01')).toBeInTheDocument();
     expect(screen.getByText('日系动漫')).toBeInTheDocument();
     expect(screen.getByText('「住手！」')).toBeInTheDocument();
