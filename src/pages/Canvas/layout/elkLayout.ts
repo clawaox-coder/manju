@@ -38,13 +38,19 @@ function sortById<T extends { id: string }>(items: T[]): T[] {
   return [...items].sort((a, b) => a.id.localeCompare(b.id));
 }
 
+function getLayoutEdges(graph: { nodes: CanvasNode[]; edges: CanvasEdge[] }): CanvasEdge[] {
+  const nodeIds = new Set(graph.nodes.map((node) => node.id));
+  return graph.edges.filter((edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target));
+}
+
 export function buildCanvasLayoutKey(graph: { nodes: CanvasNode[]; edges: CanvasEdge[] }): string {
+  const layoutEdges = getLayoutEdges(graph);
   return JSON.stringify({
     nodes: sortById(graph.nodes).map((node) => {
       const size = getNodeSize(node);
       return { id: node.id, type: node.type ?? 'script', w: size.w, h: size.h };
     }),
-    edges: sortById(graph.edges).map((edge) => ({ id: edge.id, source: edge.source, target: edge.target })),
+    edges: sortById(layoutEdges).map((edge) => ({ id: edge.id, source: edge.source, target: edge.target })),
   });
 }
 
@@ -63,6 +69,7 @@ export async function runCanvasAutoLayout(
   graph: { nodes: CanvasNode[]; edges: CanvasEdge[] },
   graphKey: string,
 ): Promise<AutoLayoutResult> {
+  const layoutEdges = getLayoutEdges(graph);
   const laidOut = await elk.layout({
     id: 'root',
     layoutOptions: {
@@ -85,7 +92,7 @@ export async function runCanvasAutoLayout(
         height: size.h,
       };
     }),
-    edges: graph.edges.map((edge) => ({
+    edges: layoutEdges.map((edge) => ({
       id: edge.id,
       sources: [edge.source],
       targets: [edge.target],
@@ -107,7 +114,7 @@ export async function runCanvasAutoLayout(
   });
 
   const edgeMap = new Map<string, ElkEdge>((laidOut.edges ?? []).map((edge) => [edge.id, edge]));
-  const routedEdges = graph.edges.map((edge) => ({
+  const routedEdges = layoutEdges.map((edge) => ({
     id: edge.id,
     color: typeof edge.style?.stroke === 'string' ? edge.style.stroke : '#a855f7',
     points: collectEdgePoints(edgeMap.get(edge.id) ?? { id: edge.id }),

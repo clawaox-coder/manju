@@ -77,6 +77,24 @@ describe('buildCanvasGraph', () => {
     expect(gateNode?.data?.badge).toBe('主线推进');
   });
 
+  it('does not connect character nodes to ai-gen before the generation node exists', () => {
+    const graph = buildCanvasGraph(
+      undefined,
+      [],
+      [makeCharacter('c1')],
+      '项目 A',
+      'idle',
+      undefined,
+      null,
+      undefined,
+      undefined,
+    );
+
+    expect(graph.nodes.some((node) => node.id === 'char-c1')).toBe(true);
+    expect(graph.nodes.some((node) => node.id === 'ai-gen')).toBe(false);
+    expect(graph.edges.some((edge) => edge.target === 'ai-gen')).toBe(false);
+  });
+
   it('adds visible coordination objects for derived decisions and risks', () => {
     const derivedState: DerivedCanvasState = {
       sceneStatus: { 'script-0': 'locked', 'script-1': 'locked' },

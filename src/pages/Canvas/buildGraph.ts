@@ -113,6 +113,8 @@ export function buildCanvasGraph(
     });
   }
 
+  const hasAiGenerationNode = scenes.length > 0 || shotList.length > 0;
+
   // --- Character nodes (top-center) ---
   charList.forEach((char, i) => {
     const id = `char-${char.id}`;
@@ -129,12 +131,14 @@ export function buildCanvasGraph(
         status: derivedState?.characterStatus[id] ?? (char.thumbnail_url || char.avatar || char.file_url ? 'ready' : 'warning'),
       },
     });
-    edges.push({
-      id: `e-char-${char.id}-ai`,
-      source: `char-${char.id}`,
-      target: 'ai-gen',
-      style: { stroke: '#ec4899', strokeDasharray: '4 2' },
-    });
+    if (hasAiGenerationNode) {
+      edges.push({
+        id: `e-char-${char.id}-ai`,
+        source: `char-${char.id}`,
+        target: 'ai-gen',
+        style: { stroke: '#ec4899', strokeDasharray: '4 2' },
+      });
+    }
   });
 
   // --- Storyboard shot nodes (right column) ---
