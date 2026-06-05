@@ -29,7 +29,7 @@ async function pollUntilTerminal(jobId: string): Promise<{ ok: boolean; url: str
   }
 }
 
-export function VideoOutVariant({ projectId }: Props) {
+export function OutputVersionEditor({ projectId }: Props) {
   const confirm = useConfirm();
   const [resolution, setResolution] = useState<Resolution>('1080p');
   const [format, setFormat] = useState<Format>('mp4');
@@ -74,7 +74,6 @@ export function VideoOutVariant({ projectId }: Props) {
         </p>
       </div>
 
-      {/* 分辨率 */}
       <div className="px-3.5 py-3 border-b border-border">
         <div className="text-[11px] font-medium text-muted-foreground mb-1.5">分辨率</div>
         <div className="flex gap-1">
@@ -96,7 +95,6 @@ export function VideoOutVariant({ projectId }: Props) {
         </div>
       </div>
 
-      {/* 格式 */}
       <div className="px-3.5 py-3 border-b border-border">
         <div className="text-[11px] font-medium text-muted-foreground mb-1.5">格式</div>
         <div className="flex gap-1">
@@ -118,7 +116,6 @@ export function VideoOutVariant({ projectId }: Props) {
         </div>
       </div>
 
-      {/* 执行 */}
       <div className="px-3.5 py-3 border-b border-border">
         <button
           type="button"
@@ -140,7 +137,6 @@ export function VideoOutVariant({ projectId }: Props) {
         </button>
       </div>
 
-      {/* 完成态 */}
       {resultUrl && (
         <div className="px-3.5 py-3 space-y-2">
           <div className="text-[11px] font-medium text-muted-foreground">完成</div>

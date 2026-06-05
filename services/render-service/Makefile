@@ -25,7 +25,7 @@ dev: ## 本地起 HTTP 服务 (依赖 docker compose 已起 pg+minio+kafka)
 		S3_REGION=us-east-1 \
 		KAFKA_BROKERS=localhost:9092 \
 		KAFKA_TOPIC_REQUESTED=render.requested \
-		CORS_ORIGINS=http://localhost:5173,http://localhost:5174 \
+		CORS_ORIGINS=http://localhost:5173,http://localhost:5174,http://localhost:4173,http://127.0.0.1:5173,http://127.0.0.1:5174,http://127.0.0.1:4173 \
 		$(GO) run ./cmd/server
 
 dev-worker: ## 本地起 worker (需要本机有 ffmpeg, 或走 docker compose)

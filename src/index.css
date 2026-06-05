@@ -103,3 +103,25 @@
 
 .tl-menu-zone { display: none !important; }
 .tlui-layout__top__left { display: none !important; }
+
+@keyframes manju-arrow-flow {
+  from { stroke-dashoffset: 0; }
+  to { stroke-dashoffset: -18; }
+}
+
+@layer base {
+  .tl-canvas svg g[stroke-linejoin="round"][stroke-linecap="round"] path[stroke-dasharray] {
+    animation: manju-arrow-flow 1.2s linear infinite;
+  }
+
+  .manju-flow-edge {
+    animation: manju-arrow-flow 1.2s linear infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .tl-canvas svg g[stroke-linejoin="round"][stroke-linecap="round"] path[stroke-dasharray],
+    .manju-flow-edge {
+      animation: none;
+    }
+  }
+}

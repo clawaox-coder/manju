@@ -16,7 +16,7 @@ dev: ## 本地起服务 (依赖 docker compose 已起 pg+redis)
 		JWT_PUBLIC_KEY_PATH=$(CURDIR)/../../scripts/dev/secrets/jwt-public.pem \
 		JWT_ISSUER=manju-auth \
 		HTTP_ADDR=:8002 \
-		CORS_ORIGINS=http://localhost:5173 \
+		CORS_ORIGINS=http://localhost:5173,http://localhost:5174,http://localhost:4173,http://127.0.0.1:5173,http://127.0.0.1:5174,http://127.0.0.1:4173 \
 		pnpm dev
 
 build: ## 编译 TypeScript

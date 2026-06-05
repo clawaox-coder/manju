@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import * as api from '@/lib/api/assets';
 import type { ListAssetsParams, CreateAssetInput, AssetType } from '@/lib/api/assets';
 import { optimizeCharacter, type OptimizeCharacterInput } from '@/lib/api/ai';
+import { demoCanvasCharacters } from '@/pages/Canvas/demoCanvasData';
 
 export function useAssets(params: ListAssetsParams = {}) {
   return useQuery({
@@ -13,7 +14,13 @@ export function useAssets(params: ListAssetsParams = {}) {
 export function useAsset(type: AssetType, id: string | undefined) {
   return useQuery({
     queryKey: ['asset', type, id],
-    queryFn: () => api.getAsset(type, id!),
+    queryFn: () => {
+      if (type === 'character') {
+        const demoAsset = demoCanvasCharacters.find((asset) => asset.id === id);
+        if (demoAsset) return Promise.resolve(demoAsset);
+      }
+      return api.getAsset(type, id!);
+    },
     enabled: !!id,
   });
 }

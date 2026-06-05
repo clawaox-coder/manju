@@ -2,6 +2,7 @@ import type { ScriptDTO, ShotDTO } from '@/lib/api/scripts';
 import type { AssetDTO } from '@/lib/api/assets';
 import { loadCanvasPositions } from './persistence';
 import { splitScenes } from './sceneSplit';
+import type { DerivedCanvasState } from './canvasDerivedState';
 
 export interface CanvasNode {
   id: string;
@@ -30,6 +31,19 @@ function formatDuration(ms: number): string {
   return `${String(m).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
 }
 
+function summarizeTargets(targetIds: string[]) {
+  if (targetIds.length <= 1) return '关联 1 个对象';
+  return `关联 ${targetIds.length} 个对象`;
+}
+
+function formatShotTitle(shot: ShotDTO, index: number) {
+  const ordinal = `Shot ${String(index + 1).padStart(2, '0')}`;
+  const existing = shot.title?.trim();
+  if (!existing) return `${ordinal} · 镜头 ${index + 1}`;
+  if (existing === ordinal || existing.startsWith(`${ordinal} ·`)) return existing;
+  return `${ordinal} · ${existing}`;
+}
+
 export function buildCanvasGraph(
   script: ScriptDTO | undefined,
   shots: ShotDTO[] | undefined,
@@ -38,6 +52,11 @@ export function buildCanvasGraph(
   aiStatus: 'idle' | 'running' | 'done' | 'error' = 'idle',
   onRunAi?: () => void,
   projectId?: string | null,
+  derivedState?: DerivedCanvasState,
+  workflowState?: {
+    hasVoice?: boolean;
+    hasVideo?: boolean;
+  },
 ): { nodes: CanvasNode[]; edges: CanvasEdge[] } {
   const nodes: CanvasNode[] = [];
   const edges: CanvasEdge[] = [];
@@ -45,6 +64,8 @@ export function buildCanvasGraph(
   const scenes = script ? splitScenes(script.content) : [];
   const shotList = shots ?? [];
   const charList = (characters ?? []).slice(0, 6);
+  const hasVoice = workflowState?.hasVoice ?? (shotList.length > 0 && shotList.every((shot) => !!shot.voice_id));
+  const hasVideo = workflowState?.hasVideo ?? false;
 
   const savedPositions = projectId ? loadCanvasPositions(projectId) : null;
   // 把 saved 的 {x,y,w?,h?} 投到 CanvasNode 的 position + 可选 size。
@@ -68,6 +89,7 @@ export function buildCanvasGraph(
         sceneNumber: i + 1,
         title: `Script ${String(i + 1).padStart(2, '0')} · ${scene.title}`,
         content: scene.content.slice(0, 120),
+        status: derivedState?.sceneStatus[id] ?? (script ? 'ready' : 'draft'),
       },
     });
   });
@@ -84,7 +106,7 @@ export function buildCanvasGraph(
         title: 'Agent Core · Storyboard Director',
         label: 'AI 分镜生成',
         type: 'generate',
-        status: aiStatus,
+        status: derivedState?.aiStatus ?? aiStatus,
         model: 'Sonnet 4.6',
         onRun: onRunAi,
       },
@@ -104,6 +126,7 @@ export function buildCanvasGraph(
         description: char.description || '',
         avatar: char.thumbnail_url || char.avatar || char.file_url,
         tags: char.tags,
+        status: derivedState?.characterStatus[id] ?? (char.thumbnail_url || char.avatar || char.file_url ? 'ready' : 'warning'),
       },
     });
     edges.push({
@@ -123,10 +146,11 @@ export function buildCanvasGraph(
       ...sized(id, { x: 650, y: i * 230 }),
       data: {
         shotNumber: i + 1,
-        title: `Shot ${String(i + 1).padStart(2, '0')} · ${shot.title || `镜头 ${i + 1}`}`,
+        title: formatShotTitle(shot, i),
         dialog: shot.dialog || '',
         style: (shot.metadata?.style as string) || '日系动漫',
         imageUrl: shot.image_url,
+        status: derivedState?.shotStatus[id] ?? 'ready',
       },
     });
     edges.push({
@@ -160,7 +184,7 @@ export function buildCanvasGraph(
       data: {
         title: `Video Master · ${projectName || '视频输出'}`,
         duration: formatDuration(totalMs),
-        status: 'waiting',
+        status: derivedState?.videoStatus ?? 'waiting',
       },
     });
     shotList.forEach((shot) => {
@@ -174,6 +198,150 @@ export function buildCanvasGraph(
       });
     });
   }
+
+  const coordinationNodeIds = new Set<string>([
+    ...(derivedState?.decisions ?? []).map((item) => item.id),
+    ...(derivedState?.risks ?? []).map((item) => item.id),
+  ]);
+  const genericDecisions: Array<{ id: string; kind: string; label: string; targetIds: string[] }> = [];
+  if (!script && !coordinationNodeIds.has('gate-script')) {
+    genericDecisions.push({
+      id: 'gate-script',
+      kind: 'generate_script',
+      label: '确定一个可继续展开的剧本方向',
+      targetIds: [],
+    });
+  }
+  if (script && shotList.length === 0 && !coordinationNodeIds.has('gate-storyboard')) {
+    genericDecisions.push({
+      id: 'gate-storyboard',
+      kind: 'generate_storyboard',
+      label: '决定是否按当前剧本生成分镜',
+      targetIds: scenes.map((_, index) => `script-${index}`),
+    });
+  }
+  if (shotList.length > 0 && !hasVoice && !coordinationNodeIds.has('gate-voice') && !coordinationNodeIds.has('decision-confirm-voice')) {
+    genericDecisions.push({
+      id: 'gate-voice',
+      kind: 'match_voice',
+      label: '确定整体声音策略并进入配音',
+      targetIds: shotList.map((shot) => `shot-${shot.id}`),
+    });
+  }
+  if (shotList.length > 0 && hasVoice && !hasVideo && !coordinationNodeIds.has('gate-video')) {
+    genericDecisions.push({
+      id: 'gate-video',
+      kind: 'render_video',
+      label: '确认当前素材是否可以直接出片',
+      targetIds: ['video-out'],
+    });
+  }
+
+  genericDecisions.forEach((decision, index) => {
+    nodes.push({
+      id: decision.id,
+      type: 'decision',
+      ...sized(decision.id, {
+        x: scenes.length === 0 ? 360 : 640,
+        y: shotList.length === 0 ? 120 + index * 128 : shotList.length * 230 + 110 + index * 128,
+      }),
+      data: {
+        title: decision.label,
+        badge: decision.targetIds.length > 0 ? summarizeTargets(decision.targetIds) : '主线推进',
+        content: '这是当前主线上的关键拍板点，确认后才能继续推进下一段制作。',
+        status: 'candidate',
+        kind: decision.kind,
+        targetIds: decision.targetIds,
+      },
+    });
+  });
+
+  const existingNodeIds = new Set(nodes.map((node) => node.id));
+  const visibleTargets = (targetIds: string[]) => targetIds.filter((targetId) => existingNodeIds.has(targetId)).slice(0, 3);
+
+  genericDecisions.forEach((decision) => {
+    const targets = visibleTargets(decision.targetIds);
+    const fallbackTarget = decision.kind === 'generate_storyboard'
+      ? 'ai-gen'
+      : decision.kind === 'match_voice'
+        ? 'video-out'
+        : 'ai-gen';
+    const edgeTargets = targets.length > 0
+      ? targets
+      : (existingNodeIds.has(fallbackTarget) ? [fallbackTarget] : []);
+    edgeTargets.forEach((targetId, edgeIndex) => {
+      edges.push({
+        id: `e-${decision.id}-${targetId}-${edgeIndex}`,
+        source: decision.id,
+        target: targetId,
+        style: { stroke: '#6366f1', strokeDasharray: '6 3' },
+      });
+    });
+  });
+
+  (derivedState?.decisions ?? []).forEach((decision, index) => {
+    const id = decision.id;
+    const targets = visibleTargets(decision.targetIds);
+    nodes.push({
+      id,
+      type: 'decision',
+      ...sized(id, { x: 640, y: shotList.length * 230 + 110 + index * 128 }),
+      data: {
+        title: decision.label,
+        badge: summarizeTargets(decision.targetIds),
+        content: '选择后会围绕这个对象进入拍板工作态。',
+        status: 'candidate',
+        kind: decision.kind,
+        targetIds: decision.targetIds,
+      },
+    });
+    const fallbackTarget = decision.kind === 'render_video' ? 'video-out' : 'ai-gen';
+    const edgeTargets = targets.length > 0
+      ? targets
+      : (existingNodeIds.has(fallbackTarget) ? [fallbackTarget] : []);
+    edgeTargets.forEach((targetId, edgeIndex) => {
+      edges.push({
+        id: `e-${id}-${targetId}-${edgeIndex}`,
+        source: id,
+        target: targetId,
+        style: { stroke: '#6366f1', strokeDasharray: '6 3' },
+      });
+    });
+  });
+
+  (derivedState?.risks ?? []).forEach((risk, index) => {
+    const id = risk.id;
+    const targets = visibleTargets(risk.targetIds);
+    nodes.push({
+      id,
+      type: 'risk',
+      ...sized(id, { x: 360, y: shotList.length * 230 + 110 + index * 128 }),
+      data: {
+        title: risk.label,
+        badge: summarizeTargets(risk.targetIds),
+        content: '选择后会围绕这个对象进入风险评估工作态。',
+        status: risk.kind === 'stale_dependency' ? 'stale' : 'warning',
+        kind: risk.kind,
+        targetIds: risk.targetIds,
+      },
+    });
+    const fallbackTarget = existingNodeIds.has('ai-gen')
+      ? 'ai-gen'
+      : existingNodeIds.has('video-out')
+        ? 'video-out'
+        : null;
+    const edgeTargets = targets.length > 0
+      ? targets
+      : (fallbackTarget ? [fallbackTarget] : []);
+    edgeTargets.forEach((targetId, edgeIndex) => {
+      edges.push({
+        id: `e-${id}-${targetId}-${edgeIndex}`,
+        source: id,
+        target: targetId,
+        style: { stroke: '#f43f5e', strokeDasharray: '4 4' },
+      });
+    });
+  });
 
   return { nodes, edges };
 }

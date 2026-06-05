@@ -53,7 +53,7 @@ func FromEnv() (Config, error) {
 		return c, errors.New("S3_ACCESS_KEY / S3_SECRET_KEY are required")
 	}
 
-	corsRaw := getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:5174,http://localhost:3000")
+	corsRaw := getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:5174,http://localhost:4173,http://127.0.0.1:5173,http://127.0.0.1:5174,http://127.0.0.1:4173,http://localhost:3000")
 	for _, o := range strings.Split(corsRaw, ",") {
 		if s := strings.TrimSpace(o); s != "" {
 			c.CORSOrigins = append(c.CORSOrigins, s)

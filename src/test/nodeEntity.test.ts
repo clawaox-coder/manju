@@ -19,6 +19,12 @@ describe('resolveNodeEntity', () => {
     expect(resolveNodeEntity('video-out')).toEqual({ kind: 'hub-video' });
   });
 
+  it('解析协作对象节点', () => {
+    expect(resolveNodeEntity('decision-confirm-voice')).toEqual({ kind: 'decision', decisionId: 'decision-confirm-voice' });
+    expect(resolveNodeEntity('gate-script')).toEqual({ kind: 'decision', decisionId: 'gate-script' });
+    expect(resolveNodeEntity('risk-script-shot-stale')).toEqual({ kind: 'risk', riskId: 'risk-script-shot-stale' });
+  });
+
   it('未知 id(如 arrow-)返回 unknown', () => {
     expect(resolveNodeEntity('arrow-e1')).toEqual({ kind: 'unknown', raw: 'arrow-e1' });
   });
@@ -29,6 +35,9 @@ describe('resolveNodeEntity', () => {
     expect(isContentNode(resolveNodeEntity('char-x'))).toBe(true);
     expect(isContentNode(resolveNodeEntity('ai-gen'))).toBe(false);
     expect(isContentNode(resolveNodeEntity('video-out'))).toBe(false);
+    expect(isContentNode(resolveNodeEntity('decision-confirm-voice'))).toBe(false);
+    expect(isContentNode(resolveNodeEntity('gate-script'))).toBe(false);
+    expect(isContentNode(resolveNodeEntity('risk-script-shot-stale'))).toBe(false);
     expect(isContentNode(resolveNodeEntity('arrow-e1'))).toBe(false);
   });
 });

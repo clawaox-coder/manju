@@ -1,11 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Tldraw, useEditor, createShapeId, useValue, getArrowBindings } from 'tldraw';
+import { FolderOpen, MessageSquarePlus, MessageSquareText, MoreHorizontal, X } from 'lucide-react';
 import 'tldraw/tldraw.css';
 import { ChatPanel } from './chat/ChatPanel';
 import { CanvasToolbar } from './CanvasToolbar';
 import { AssetLibraryPanel } from './AssetLibraryPanel';
 import { UploadDialog } from '@/components/domain/UploadDialog';
+import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { linkProjectAsset, type AssetDTO } from '@/lib/api/assets';
 import { AgentStateMachine } from './agent/AgentStateMachine';
 import { makeUserMessage, makeAiMessage, makeProgressMessage, makeErrorAction, makeSystemMessage, makeCardGroupMessage, makeMilestoneMessage } from './agent/AgentMessages';
@@ -17,12 +26,28 @@ import { useAssets } from '@/hooks/useAssetApi';
 import { useProjects, useUpdateProject } from '@/hooks/useProjectApi';
 import { voiceMatch, streamScriptContinue, storyboardGenerate, getAiTask, chat, generateTitle, type ChatTrigger } from '@/lib/api/ai';
 import { createRender, getRender } from '@/lib/api/render';
-import { buildCanvasGraph } from './buildGraph';
+import { buildCanvasGraph, type CanvasEdge as CanvasGraphEdge, type CanvasNode as CanvasGraphNode } from './buildGraph';
 import { ManjuNodeUtil, MANJU_NODE_SIZE, type ManjuNodeType, type ManjuNodeProps } from './canvas/ManjuNodeUtil';
-import { getSystemArrowShape } from './canvas/arrowStyle';
+import { CanvasInlineEditorOverlay } from './CanvasInlineEditorOverlay';
+import { getObjectWorkbenchLayoutPrefs } from './objectWorkbenchLayout';
+import {
+  DEMO_CANVAS_PROJECT_ID,
+  DEMO_CANVAS_PROJECT_NAME,
+  demoCanvasCharacters,
+  isDemoCanvasProjectId,
+} from './demoCanvasData';
 import { getConversationResetMessage } from './chat/sessionReset';
-import { WorkspaceRail } from './WorkspaceRail';
-import { NodeOptimizePanel } from './NodeOptimizePanel';
+import { type RoutedSystemEdge } from './layout/elkLayout';
+import { useCanvasAutoLayout } from './layout/useCanvasAutoLayout';
+import { deriveCanvasState } from './canvasDerivedState';
+import {
+  buildCanvasContextSummary,
+  buildFocusMemory,
+  getNodeFocusTypeLabel,
+  getNodeLabel,
+  getNodeStageTask,
+  type TurnContext,
+} from './focusContext';
 import {
   loadUserArrows,
   saveCanvasPositions,
@@ -31,6 +56,7 @@ import {
   type PositionRecord,
   type UserArrowRecord,
 } from './persistence';
+import { cn } from '@/lib/utils';
 
 const MANJU_SHAPE_UTILS = [ManjuNodeUtil];
 
@@ -63,6 +89,8 @@ const STAGE_LABELS = {
   voice: '配声音',
   video: '出成片',
 } as const;
+
+const CANVAS_NODE_TYPES: ManjuNodeType[] = ['script', 'storyboard', 'character', 'ai', 'video', 'decision', 'risk'];
 
 // 每个 stage 只允许它对应的那一个制作动作（与后端 CHAT_SYSTEM 的白名单一致）。
 // video 阶段不允许任何 trigger。前端据此对 LLM 返回的 trigger 做越权校验。
@@ -100,59 +128,62 @@ async function pollAiTask(taskId: string): Promise<boolean> {
   }
 }
 
-interface CanvasGraphNode {
-  id: string;
-  type?: string;
-  position?: { x: number; y: number };
-  // canvas-node-edit-layout:用户已 saved 的尺寸(persistence),优先于 MANJU_NODE_SIZE 默认。
-  size?: { w: number; h: number };
-  data?: {
-    title?: string;
-    content?: string;
-    name?: string;
-    description?: string;
-    dialog?: string;
-    style?: string;
-    duration?: string;
-    status?: string;
-    label?: string;
-    model?: string;
-    avatar?: string;
-    sceneNumber?: number;
-    shotNumber?: number;
-    imageUrl?: string;
-  };
-}
-
-interface CanvasGraphEdge {
-  id: string;
-  source: string;
-  target: string;
-}
-
 // 把 buildGraph 的 node.data 按 type 映射成 manjuNode 的扁平 props。
 // 尺寸:用户已 saved(node.size)优先,否则用 MANJU_NODE_SIZE[type] 默认。
 function toManjuProps(node: CanvasGraphNode): ManjuNodeProps {
   const d = node.data ?? {};
-  const nodeType = (['script', 'storyboard', 'character', 'ai', 'video'].includes(node.type ?? '')
+  const nodeType = (CANVAS_NODE_TYPES.includes((node.type ?? '') as ManjuNodeType)
     ? node.type : 'script') as ManjuNodeType;
   const size = node.size ?? MANJU_NODE_SIZE[nodeType];
-  const base = { ...size, nodeType, title: d.title ?? node.id, body: '', badge: '', imageUrl: '', status: '' };
+  const base = { ...size, nodeId: node.id, nodeType, title: d.title ?? node.id, body: '', badge: '', imageUrl: '', status: '' };
   switch (nodeType) {
     case 'script':
-      return { ...base, badge: d.sceneNumber ? String(d.sceneNumber) : '', body: d.content ?? '' };
+      return { ...base, badge: d.sceneNumber ? String(d.sceneNumber) : '', body: d.content ?? '', status: d.status ?? 'draft' };
     case 'storyboard':
-      return { ...base, badge: d.style ?? '', body: d.dialog ?? '', imageUrl: d.imageUrl ?? '' };
+      return { ...base, badge: d.style ?? '', body: d.dialog ?? '', imageUrl: d.imageUrl ?? '', status: d.status ?? 'draft' };
     case 'character':
-      return { ...base, title: d.name ?? d.title ?? '角色', body: d.description ?? '', imageUrl: d.avatar ?? '' };
+      return { ...base, title: d.name ?? d.title ?? '角色', body: d.description ?? '', imageUrl: d.avatar ?? '', status: d.status ?? 'ready' };
     case 'ai':
       return { ...base, title: d.label ?? d.title ?? 'AI', badge: d.model ?? '', status: d.status ?? 'idle' };
     case 'video':
       return { ...base, badge: d.duration ?? '', body: '等待素材', status: d.status ?? 'waiting' };
+    case 'decision':
+    case 'risk':
+      return { ...base, badge: d.badge ?? '', body: d.content ?? '', status: d.status ?? (nodeType === 'decision' ? 'candidate' : 'warning') };
     default:
       return base;
   }
 }
+
+function turnContextForNode(node?: CanvasGraphNode | null): TurnContext {
+  if (node?.type === 'decision') {
+    return {
+      intent_source: 'canvas_action',
+      canvas_action: { type: 'confirm', target_id: node.id },
+      expects: 'confirmation',
+    };
+  }
+  if (node?.type === 'risk') {
+    return {
+      intent_source: 'canvas_action',
+      canvas_action: { type: 'select', target_id: node.id },
+      expects: 'risk_review',
+    };
+  }
+  return {
+    intent_source: 'canvas_action',
+    canvas_action: { type: 'select', target_id: node?.id },
+    expects: 'explanation',
+  };
+}
+
+type OverlayAnchor = {
+  left: number;
+  top: number;
+  width: number;
+  maxHeight: number;
+  compact: boolean;
+};
 
 function stripShapePrefix(shapeId: string): string {
   return shapeId.replace(/^shape:/, '');
@@ -162,7 +193,9 @@ type ArrowShapeView = {
   id: string;
   type: string;
   isLocked?: boolean;
+  opacity?: number;
   meta?: Record<string, unknown>;
+  props?: { kind?: string; bend?: number; arrowheadEnd?: string; arrowheadStart?: string };
 };
 
 type ManjuShapeView = {
@@ -173,9 +206,639 @@ type ManjuShapeView = {
   props: { w?: number; h?: number };
 };
 
+type ArrowBindingView = {
+  id: string;
+  fromId: string;
+  toId: string;
+  type: string;
+  props: {
+    terminal: 'start' | 'end';
+    normalizedAnchor: { x: number; y: number };
+    isExact: boolean;
+    isPrecise: boolean;
+  };
+};
+
+type SmartAnchorContext = {
+  sourceType?: string;
+  targetType?: string;
+  sourceRank?: number;
+  sourceCount?: number;
+  targetRank?: number;
+  targetCount?: number;
+};
+
+type ScreenPoint = { x: number; y: number };
+
+type RectLike = { x: number; y: number; w: number; h: number };
+
+type OverlayEdge = {
+  id: string;
+  color: string;
+  segments: Array<{ a: ScreenPoint; b: ScreenPoint; orientation: 'h' | 'v' }>;
+};
+
+type BridgeMarker = {
+  edgeId: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
 function isUserArrowShape(shape: ArrowShapeView | undefined): boolean {
   if (!shape || shape.type !== 'arrow' || shape.isLocked) return false;
   return shape.meta?.[USER_ARROW_META_KEY] === true;
+}
+
+function hashArrowBendSeed(value: string): number {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = ((hash << 5) - hash) + value.charCodeAt(i);
+    hash |= 0;
+  }
+  return hash;
+}
+
+function getArrowVisualProps(seed: string) {
+  const bend = (Math.abs(hashArrowBendSeed(seed)) % 2 === 0 ? 24 : -24);
+  return {
+    kind: 'elbow',
+    bend,
+    dash: 'dashed',
+    arrowheadStart: 'none',
+    arrowheadEnd: 'none',
+  } as const;
+}
+
+function getAnchorLane(seed: string): number {
+  return Math.abs(hashArrowBendSeed(seed)) % 5;
+}
+
+function getSmartAnchors(
+  fromRect: { x: number; y: number; w: number; h: number },
+  toRect: { x: number; y: number; w: number; h: number },
+  seed: string,
+  context?: SmartAnchorContext,
+): { start: { x: number; y: number }; end: { x: number; y: number } } {
+  const fromCenter = { x: fromRect.x + fromRect.w / 2, y: fromRect.y + fromRect.h / 2 };
+  const toCenter = { x: toRect.x + toRect.w / 2, y: toRect.y + toRect.h / 2 };
+  const dx = toCenter.x - fromCenter.x;
+  const dy = toCenter.y - fromCenter.y;
+  const lane = getAnchorLane(seed);
+  const laneOffsets = [0.18, 0.34, 0.5, 0.66, 0.82] as const;
+  const laneValue = laneOffsets[lane];
+  const sourceHub = context?.sourceType === 'ai' || context?.sourceType === 'video';
+  const targetHub = context?.targetType === 'ai' || context?.targetType === 'video';
+  const sourceCrowded = (context?.sourceCount ?? 0) >= 3;
+  const targetCrowded = (context?.targetCount ?? 0) >= 3;
+  const sourceLane = context?.sourceRank != null
+    ? laneOffsets[Math.min(context.sourceRank, laneOffsets.length - 1)]
+    : laneValue;
+  const targetLane = context?.targetRank != null
+    ? laneOffsets[Math.min(context.targetRank, laneOffsets.length - 1)]
+    : laneOffsets[(lane + 1) % laneOffsets.length];
+
+  if ((sourceHub || sourceCrowded) && Math.abs(dy) > 24) {
+    return {
+      start: dy >= 0 ? { x: sourceLane, y: 1 } : { x: sourceLane, y: 0 },
+      end: Math.abs(dx) >= Math.abs(dy)
+        ? (dx >= 0 ? { x: 0, y: targetLane } : { x: 1, y: targetLane })
+        : (dy >= 0 ? { x: targetLane, y: 0 } : { x: targetLane, y: 1 }),
+    };
+  }
+
+  if ((targetHub || targetCrowded) && Math.abs(dy) > 24) {
+    return {
+      start: Math.abs(dx) >= Math.abs(dy)
+        ? (dx >= 0 ? { x: 1, y: sourceLane } : { x: 0, y: sourceLane })
+        : (dy >= 0 ? { x: sourceLane, y: 1 } : { x: sourceLane, y: 0 }),
+      end: dy >= 0 ? { x: targetLane, y: 0 } : { x: targetLane, y: 1 },
+    };
+  }
+
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    return dx >= 0
+      ? {
+          start: { x: 1, y: sourceLane },
+          end: { x: 0, y: targetLane },
+        }
+      : {
+          start: { x: 0, y: sourceLane },
+          end: { x: 1, y: targetLane },
+        };
+  }
+
+  return dy >= 0
+    ? {
+        start: { x: sourceLane, y: 1 },
+        end: { x: targetLane, y: 0 },
+      }
+    : {
+        start: { x: sourceLane, y: 0 },
+        end: { x: targetLane, y: 1 },
+      };
+}
+
+function buildEdgeContextMap(graph: { nodes: CanvasGraphNode[]; edges: CanvasGraphEdge[] }) {
+  const graphNodeMap = new Map(graph.nodes.map((n) => [n.id, n]));
+  const outgoingRankMap = new Map<string, number>();
+  const incomingRankMap = new Map<string, number>();
+  const outgoingCountMap = new Map<string, number>();
+  const incomingCountMap = new Map<string, number>();
+  const edgeContextMap = new Map<string, SmartAnchorContext>();
+  const outgoingGroups = new Map<string, CanvasGraphEdge[]>();
+  const incomingGroups = new Map<string, CanvasGraphEdge[]>();
+
+  for (const edge of graph.edges) {
+    outgoingGroups.set(edge.source, [...(outgoingGroups.get(edge.source) ?? []), edge]);
+    incomingGroups.set(edge.target, [...(incomingGroups.get(edge.target) ?? []), edge]);
+  }
+  for (const [sourceId, edges] of outgoingGroups) {
+    const sorted = [...edges].sort((a, b) => {
+      const ay = (graphNodeMap.get(a.target)?.position?.y ?? 0);
+      const by = (graphNodeMap.get(b.target)?.position?.y ?? 0);
+      return ay - by;
+    });
+    outgoingCountMap.set(sourceId, sorted.length);
+    sorted.forEach((edge, index) => outgoingRankMap.set(edge.id, index));
+  }
+  for (const [targetId, edges] of incomingGroups) {
+    const sorted = [...edges].sort((a, b) => {
+      const ay = (graphNodeMap.get(a.source)?.position?.y ?? 0);
+      const by = (graphNodeMap.get(b.source)?.position?.y ?? 0);
+      return ay - by;
+    });
+    incomingCountMap.set(targetId, sorted.length);
+    sorted.forEach((edge, index) => incomingRankMap.set(edge.id, index));
+  }
+  for (const edge of graph.edges) {
+    edgeContextMap.set(edge.id, {
+      sourceType: graphNodeMap.get(edge.source)?.type,
+      targetType: graphNodeMap.get(edge.target)?.type,
+      sourceRank: outgoingRankMap.get(edge.id),
+      sourceCount: outgoingCountMap.get(edge.source),
+      targetRank: incomingRankMap.get(edge.id),
+      targetCount: incomingCountMap.get(edge.target),
+    });
+  }
+  return edgeContextMap;
+}
+
+function anchorToPoint(rect: { x: number; y: number; w: number; h: number }, anchor: { x: number; y: number }): ScreenPoint {
+  return {
+    x: rect.x + rect.w * anchor.x,
+    y: rect.y + rect.h * anchor.y,
+  };
+}
+
+function pointInsideRect(point: ScreenPoint, rect: RectLike, padding = 0) {
+  return point.x >= rect.x - padding
+    && point.x <= rect.x + rect.w + padding
+    && point.y >= rect.y - padding
+    && point.y <= rect.y + rect.h + padding;
+}
+
+function segmentIntersectsRect(a: ScreenPoint, b: ScreenPoint, rect: RectLike, padding = 0) {
+  const expanded = {
+    x: rect.x - padding,
+    y: rect.y - padding,
+    w: rect.w + padding * 2,
+    h: rect.h + padding * 2,
+  };
+  if (pointInsideRect(a, expanded) || pointInsideRect(b, expanded)) return false;
+  if (Math.abs(a.x - b.x) < 0.5) {
+    const x = a.x;
+    const minY = Math.min(a.y, b.y);
+    const maxY = Math.max(a.y, b.y);
+    return x >= expanded.x
+      && x <= expanded.x + expanded.w
+      && maxY >= expanded.y
+      && minY <= expanded.y + expanded.h;
+  }
+  if (Math.abs(a.y - b.y) < 0.5) {
+    const y = a.y;
+    const minX = Math.min(a.x, b.x);
+    const maxX = Math.max(a.x, b.x);
+    return y >= expanded.y
+      && y <= expanded.y + expanded.h
+      && maxX >= expanded.x
+      && minX <= expanded.x + expanded.w;
+  }
+  return false;
+}
+
+function isVerticalAnchor(anchor: { x: number; y: number }) {
+  return anchor.y === 0 || anchor.y === 1;
+}
+
+function isHorizontalAnchor(anchor: { x: number; y: number }) {
+  return anchor.x === 0 || anchor.x === 1;
+}
+
+function getObstacleAwareAnchors(
+  fromRect: RectLike,
+  toRect: RectLike,
+  seed: string,
+  obstacles: RectLike[],
+  context?: SmartAnchorContext,
+) {
+  const anchors = getSmartAnchors(fromRect, toRect, seed, context);
+  const start = anchorToPoint(fromRect, anchors.start);
+  const end = anchorToPoint(toRect, anchors.end);
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const sideLane = anchors.start.y === 0 || anchors.start.y === 1 ? anchors.start.x : anchors.start.y;
+  const endSideLane = anchors.end.y === 0 || anchors.end.y === 1 ? anchors.end.x : anchors.end.y;
+  const startProbe = isVerticalAnchor(anchors.start)
+    ? { x: start.x, y: start.y + (dy >= 0 ? 56 : -56) }
+    : { x: start.x + (dx >= 0 ? 56 : -56), y: start.y };
+  const endProbe = isVerticalAnchor(anchors.end)
+    ? { x: end.x, y: end.y + (dy >= 0 ? -56 : 56) }
+    : { x: end.x + (dx >= 0 ? -56 : 56), y: end.y };
+
+  const startBlocked = obstacles.some((rect) => segmentIntersectsRect(start, startProbe, rect, 14));
+  const endBlocked = obstacles.some((rect) => segmentIntersectsRect(end, endProbe, rect, 14));
+
+  if (startBlocked) {
+    anchors.start = Math.abs(dx) >= Math.abs(dy)
+      ? (dx >= 0 ? { x: 1, y: sideLane } : { x: 0, y: sideLane })
+      : (dx >= 0 ? { x: 1, y: 0.72 } : { x: 0, y: 0.28 });
+  }
+
+  if (endBlocked) {
+    anchors.end = Math.abs(dx) >= Math.abs(dy)
+      ? (dx >= 0 ? { x: 0, y: endSideLane } : { x: 1, y: endSideLane })
+      : (dx >= 0 ? { x: 0, y: 0.28 } : { x: 1, y: 0.72 });
+  }
+
+  return anchors;
+}
+
+function chooseCorridor(
+  candidates: number[],
+  buildSegment: (value: number) => Array<{ a: ScreenPoint; b: ScreenPoint }>,
+  obstacles: RectLike[],
+) {
+  let bestValue = candidates[0];
+  let bestPenalty = Number.POSITIVE_INFINITY;
+  for (const value of candidates) {
+    const penalty = buildSegment(value).reduce((total, segment) => (
+      total + obstacles.filter((rect) => segmentIntersectsRect(segment.a, segment.b, rect, 16)).length
+    ), 0);
+    if (penalty < bestPenalty) {
+      bestPenalty = penalty;
+      bestValue = value;
+    }
+    if (penalty === 0) break;
+  }
+  return bestValue;
+}
+
+function buildElbowRoute(
+  fromRect: { x: number; y: number; w: number; h: number },
+  toRect: { x: number; y: number; w: number; h: number },
+  seed: string,
+  obstacles: RectLike[],
+  context?: SmartAnchorContext,
+): ScreenPoint[] {
+  const anchors = getObstacleAwareAnchors(fromRect, toRect, seed, obstacles, context);
+  const start = anchorToPoint(fromRect, anchors.start);
+  const end = anchorToPoint(toRect, anchors.end);
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const offset = 18;
+
+  if (
+    (isHorizontalAnchor(anchors.start) && isHorizontalAnchor(anchors.end))
+    || (!isVerticalAnchor(anchors.start) && !isVerticalAnchor(anchors.end) && Math.abs(dx) >= Math.abs(dy))
+  ) {
+    const dir = dx >= 0 ? 1 : -1;
+    const exit = { x: start.x + dir * offset, y: start.y };
+    const enter = { x: end.x - dir * offset, y: end.y };
+    const sidePadding = 44;
+    const candidates = [
+      (exit.x + enter.x) / 2,
+      Math.max(fromRect.x + fromRect.w, toRect.x + toRect.w) + sidePadding,
+      Math.min(fromRect.x, toRect.x) - sidePadding,
+    ];
+    const midX = chooseCorridor(candidates, (value) => [
+      { a: exit, b: { x: value, y: exit.y } },
+      { a: { x: value, y: exit.y }, b: { x: value, y: enter.y } },
+      { a: { x: value, y: enter.y }, b: enter },
+    ], obstacles);
+    return [start, exit, { x: midX, y: exit.y }, { x: midX, y: enter.y }, enter, end];
+  }
+
+  const dir = dy >= 0 ? 1 : -1;
+  const exit = { x: start.x, y: start.y + dir * offset };
+  const enter = { x: end.x, y: end.y - dir * offset };
+  const sidePadding = 44;
+  const candidates = [
+    (exit.y + enter.y) / 2,
+    Math.max(fromRect.y + fromRect.h, toRect.y + toRect.h) + sidePadding,
+    Math.min(fromRect.y, toRect.y) - sidePadding,
+  ];
+  const midY = chooseCorridor(candidates, (value) => [
+    { a: exit, b: { x: exit.x, y: value } },
+    { a: { x: exit.x, y: value }, b: { x: enter.x, y: value } },
+    { a: { x: enter.x, y: value }, b: enter },
+  ], obstacles);
+  return [start, exit, { x: exit.x, y: midY }, { x: enter.x, y: midY }, enter, end];
+}
+
+function toSegments(points: ScreenPoint[]) {
+  const segments: Array<{ a: ScreenPoint; b: ScreenPoint; orientation: 'h' | 'v' }> = [];
+  for (let i = 0; i < points.length - 1; i += 1) {
+    const a = points[i];
+    const b = points[i + 1];
+    if (Math.abs(a.x - b.x) < 0.5 && Math.abs(a.y - b.y) < 0.5) continue;
+    segments.push({
+      a,
+      b,
+      orientation: Math.abs(a.y - b.y) < Math.abs(a.x - b.x) ? 'h' : 'v',
+    });
+  }
+  return segments;
+}
+
+function nudgePointAwayFromRect(
+  point: ScreenPoint,
+  nextPoint: ScreenPoint,
+  rect: RectLike,
+  gap = 12,
+): ScreenPoint {
+  if (Math.abs(point.x - nextPoint.x) < 0.5) {
+    if (Math.abs(point.x - rect.x) < 1) return { x: point.x - gap, y: point.y };
+    if (Math.abs(point.x - (rect.x + rect.w)) < 1) return { x: point.x + gap, y: point.y };
+    if (point.y <= rect.y + 1) return { x: point.x, y: point.y - gap };
+    if (point.y >= rect.y + rect.h - 1) return { x: point.x, y: point.y + gap };
+  }
+  if (Math.abs(point.y - nextPoint.y) < 0.5) {
+    if (Math.abs(point.y - rect.y) < 1) return { x: point.x, y: point.y - gap };
+    if (Math.abs(point.y - (rect.y + rect.h)) < 1) return { x: point.x, y: point.y + gap };
+    if (point.x <= rect.x + 1) return { x: point.x - gap, y: point.y };
+    if (point.x >= rect.x + rect.w - 1) return { x: point.x + gap, y: point.y };
+  }
+  return point;
+}
+
+function addTerminalGap(points: ScreenPoint[], fromRect: RectLike, toRect: RectLike, gap = 12): ScreenPoint[] {
+  if (points.length < 2) return points.map((point) => ({ ...point }));
+  const next = points.map((point) => ({ ...point }));
+  next[0] = nudgePointAwayFromRect(next[0], next[1], fromRect, gap);
+  next[next.length - 1] = nudgePointAwayFromRect(next[next.length - 1], next[next.length - 2], toRect, gap);
+  return next;
+}
+
+function rangesOverlap(a0: number, a1: number, b0: number, b1: number, padding = 0) {
+  const minA = Math.min(a0, a1);
+  const maxA = Math.max(a0, a1);
+  const minB = Math.min(b0, b1) - padding;
+  const maxB = Math.max(b0, b1) + padding;
+  return maxA >= minB && minA <= maxB;
+}
+
+function addEdgeClearance(points: ScreenPoint[], rects: RectLike[], gap = 14): ScreenPoint[] {
+  if (points.length < 2) return points.map((point) => ({ ...point }));
+  const next = points.map((point) => ({ ...point }));
+
+  for (let i = 0; i < next.length - 1; i += 1) {
+    let j = i + 1;
+
+    if (Math.abs(next[i].x - next[j].x) < 0.5) {
+      while (j + 1 < next.length && Math.abs(next[j + 1].x - next[i].x) < 0.5) j += 1;
+      const x = next[i].x;
+      const y0 = next[i].y;
+      const y1 = next[j].y;
+      let shift = 0;
+
+      for (const rect of rects) {
+        if (!rangesOverlap(y0, y1, rect.y, rect.y + rect.h, 8)) continue;
+        const leftDistance = Math.abs(x - rect.x);
+        const rightDistance = Math.abs(x - (rect.x + rect.w));
+        if (leftDistance <= gap) shift = Math.min(shift, -(gap - leftDistance + 2));
+        if (rightDistance <= gap) shift = Math.max(shift, gap - rightDistance + 2);
+      }
+
+      if (shift !== 0) {
+        for (let k = i; k <= j; k += 1) next[k].x += shift;
+      }
+      i = j - 1;
+      continue;
+    }
+
+    if (Math.abs(next[i].y - next[j].y) < 0.5) {
+      while (j + 1 < next.length && Math.abs(next[j + 1].y - next[i].y) < 0.5) j += 1;
+      const y = next[i].y;
+      const x0 = next[i].x;
+      const x1 = next[j].x;
+      let shift = 0;
+
+      for (const rect of rects) {
+        if (!rangesOverlap(x0, x1, rect.x, rect.x + rect.w, 8)) continue;
+        const topDistance = Math.abs(y - rect.y);
+        const bottomDistance = Math.abs(y - (rect.y + rect.h));
+        if (topDistance <= gap) shift = Math.min(shift, -(gap - topDistance + 2));
+        if (bottomDistance <= gap) shift = Math.max(shift, gap - bottomDistance + 2);
+      }
+
+      if (shift !== 0) {
+        for (let k = i; k <= j; k += 1) next[k].y += shift;
+      }
+      i = j - 1;
+    }
+  }
+
+  return next;
+}
+
+function buildBridgePath(segment: { a: ScreenPoint; b: ScreenPoint }, bridges: BridgeMarker[]) {
+  const sorted = [...bridges].sort((a, b) => a.x - b.x);
+  const left = Math.min(segment.a.x, segment.b.x);
+  const right = Math.max(segment.a.x, segment.b.x);
+  let d = `M ${left} ${segment.a.y}`;
+  let cursor = left;
+  for (const bridge of sorted) {
+    const startX = Math.max(cursor, bridge.x - bridge.width / 2);
+    const endX = Math.min(right, bridge.x + bridge.width / 2);
+    if (startX <= cursor || endX <= startX) continue;
+    d += ` L ${startX} ${segment.a.y}`;
+    d += ` C ${startX + bridge.width * 0.18} ${segment.a.y} ${bridge.x - bridge.width * 0.18} ${bridge.y - bridge.height} ${bridge.x} ${bridge.y - bridge.height}`;
+    d += ` C ${bridge.x + bridge.width * 0.18} ${bridge.y - bridge.height} ${endX - bridge.width * 0.18} ${segment.a.y} ${endX} ${segment.a.y}`;
+    cursor = endX;
+  }
+  d += ` L ${right} ${segment.a.y}`;
+  return d;
+}
+
+function applyArrowVisualStyle(
+  editor: ReturnType<typeof useEditor>,
+  arrowId: ReturnType<typeof createShapeId>,
+  seed: string,
+  extra?: Partial<ArrowShapeView>,
+) {
+  const visual = getArrowVisualProps(seed);
+  editor.updateShape({
+    id: arrowId,
+    type: 'arrow',
+    ...extra,
+    props: {
+      ...visual,
+    },
+  } as unknown as Parameters<typeof editor.updateShape>[0]);
+}
+
+function CanvasEdgeBridgeOverlay({
+  graph,
+  routedEdges,
+}: {
+  graph: { nodes: CanvasGraphNode[]; edges: CanvasGraphEdge[] };
+  routedEdges: RoutedSystemEdge[];
+}) {
+  const editor = useEditor();
+  const overlay = useValue('canvas-edge-bridge-overlay', () => {
+    const viewport = editor.getViewportScreenBounds();
+    const contextMap = buildEdgeContextMap(graph);
+    const edges: OverlayEdge[] = [];
+    const nodeRects = new Map<string, RectLike>();
+    const routedEdgeMap = new Map(routedEdges.map((edge) => [edge.id, edge]));
+
+    for (const node of graph.nodes) {
+      const shape = editor.getShape(createShapeId(node.id)) as unknown as ManjuShapeView | undefined;
+      if (!shape || shape.type !== 'manjuNode') continue;
+      nodeRects.set(node.id, {
+        x: shape.x,
+        y: shape.y,
+        w: shape.props.w ?? MANJU_NODE_SIZE[(CANVAS_NODE_TYPES.includes((node.type ?? '') as ManjuNodeType) ? node.type : 'script') as ManjuNodeType].w,
+        h: shape.props.h ?? MANJU_NODE_SIZE[(CANVAS_NODE_TYPES.includes((node.type ?? '') as ManjuNodeType) ? node.type : 'script') as ManjuNodeType].h,
+      });
+    }
+
+    for (const edge of graph.edges) {
+      const fromRect = nodeRects.get(edge.source);
+      const toRect = nodeRects.get(edge.target);
+      if (!fromRect || !toRect) continue;
+      const routed = routedEdgeMap.get(edge.id);
+      const route = routed?.points.length
+        ? routed.points
+        : buildElbowRoute(
+            fromRect,
+            toRect,
+            edge.id,
+            [...nodeRects.entries()]
+              .filter(([id]) => id !== edge.source && id !== edge.target)
+              .map(([, rect]) => rect),
+            contextMap.get(edge.id),
+          );
+      const routeWithClearance = addEdgeClearance(
+        addTerminalGap(route, fromRect, toRect, 12),
+        [...nodeRects.values()],
+        14,
+      ).map((point) => {
+        const screen = editor.pageToScreen(point);
+        return { x: screen.x - viewport.x, y: screen.y - viewport.y };
+      });
+      edges.push({
+        id: edge.id,
+        color: routed?.color ?? (typeof edge.style?.stroke === 'string' ? edge.style.stroke : '#f5f5f5'),
+        segments: toSegments(routeWithClearance),
+      });
+    }
+
+    const bridges = new Map<string, BridgeMarker[]>();
+    for (let i = 0; i < edges.length; i += 1) {
+      for (let j = i + 1; j < edges.length; j += 1) {
+        const a = edges[i];
+        const b = edges[j];
+        for (let ai = 0; ai < a.segments.length; ai += 1) {
+          for (let bi = 0; bi < b.segments.length; bi += 1) {
+            const segA = a.segments[ai];
+            const segB = b.segments[bi];
+            if (segA.orientation === segB.orientation) continue;
+            const horizontal = segA.orientation === 'h' ? { edge: a, index: ai, segment: segA } : { edge: b, index: bi, segment: segB };
+            const vertical = segA.orientation === 'v' ? segA : segB;
+            const minHX = Math.min(horizontal.segment.a.x, horizontal.segment.b.x);
+            const maxHX = Math.max(horizontal.segment.a.x, horizontal.segment.b.x);
+            const minVY = Math.min(vertical.a.y, vertical.b.y);
+            const maxVY = Math.max(vertical.a.y, vertical.b.y);
+            const x = vertical.a.x;
+            const y = horizontal.segment.a.y;
+            if (x <= minHX + 14 || x >= maxHX - 14 || y <= minVY + 14 || y >= maxVY - 14) continue;
+            const key = `${horizontal.edge.id}:${horizontal.index}`;
+            bridges.set(key, [
+              ...(bridges.get(key) ?? []),
+              { edgeId: horizontal.edge.id, x, y, width: 22, height: 10 },
+            ]);
+          }
+        }
+      }
+    }
+
+    return { viewport, edges, bridges };
+  }, [editor, graph]);
+
+  if (!overlay.edges.length) return null;
+
+  return (
+    <div className="pointer-events-none absolute inset-0 z-[140]">
+      <svg
+        width={overlay.viewport.w}
+        height={overlay.viewport.h}
+        viewBox={`0 0 ${overlay.viewport.w} ${overlay.viewport.h}`}
+        className="h-full w-full overflow-visible"
+        aria-hidden="true"
+      >
+        {overlay.edges.map((edge) => (
+          <g key={edge.id}>
+            {edge.segments.map((segment, index) => {
+              const bridgeKey = `${edge.id}:${index}`;
+              const segmentBridges = overlay.bridges.get(bridgeKey) ?? [];
+              const path = segment.orientation === 'h' && segmentBridges.length
+                ? buildBridgePath(segment, segmentBridges)
+                : `M ${segment.a.x} ${segment.a.y} L ${segment.b.x} ${segment.b.y}`;
+              return (
+                <path
+                  key={bridgeKey}
+                  d={path}
+                  fill="none"
+                  stroke={edge.color}
+                  strokeWidth="2.5"
+                  strokeDasharray="8 6"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="manju-flow-edge"
+                />
+              );
+            })}
+          </g>
+        ))}
+      </svg>
+    </div>
+  );
+}
+
+function updateArrowBindingsForRects(
+  editor: ReturnType<typeof useEditor>,
+  arrowId: ReturnType<typeof createShapeId>,
+  fromRect: { x: number; y: number; w: number; h: number } | null,
+  toRect: { x: number; y: number; w: number; h: number } | null,
+  seed: string,
+  context?: SmartAnchorContext,
+) {
+  if (!fromRect || !toRect) return;
+  const bindings = editor.getBindingsFromShape(arrowId, 'arrow') as unknown as ArrowBindingView[];
+  if (!bindings.length) return;
+  const anchors = getSmartAnchors(fromRect, toRect, seed, context);
+  editor.updateBindings(bindings.map((binding) => ({
+    ...binding,
+    props: {
+      ...binding.props,
+      normalizedAnchor: binding.props.terminal === 'start' ? anchors.start : anchors.end,
+      isExact: false,
+      isPrecise: false,
+    },
+  })) as unknown as Parameters<typeof editor.updateBindings>[0]);
 }
 
 function getUserArrowRecord(editor: ReturnType<typeof useEditor>, shapeId: string): UserArrowRecord | null {
@@ -222,6 +885,55 @@ function CanvasSync({
     if (!editor || !graph.nodes.length) return;
     const existing = syncedRef.current;
     const currentIds = new Set(graph.nodes.map((n) => n.id));
+    const graphNodeMap = new Map(graph.nodes.map((n) => [n.id, n]));
+    const outgoingRankMap = new Map<string, number>();
+    const incomingRankMap = new Map<string, number>();
+    const outgoingCountMap = new Map<string, number>();
+    const incomingCountMap = new Map<string, number>();
+    const edgeContextMap = new Map<string, SmartAnchorContext>();
+    const getGraphRect = (nodeId: string) => {
+      const node = graphNodeMap.get(nodeId);
+      if (!node) return null;
+      const size = node.size ?? MANJU_NODE_SIZE[(CANVAS_NODE_TYPES.includes((node.type ?? '') as ManjuNodeType)
+        ? node.type
+        : 'script') as ManjuNodeType];
+      const pos = node.position ?? { x: 0, y: 0 };
+      return { x: pos.x, y: pos.y, w: size.w, h: size.h };
+    };
+    const outgoingGroups = new Map<string, CanvasGraphEdge[]>();
+    const incomingGroups = new Map<string, CanvasGraphEdge[]>();
+    for (const edge of graph.edges) {
+      outgoingGroups.set(edge.source, [...(outgoingGroups.get(edge.source) ?? []), edge]);
+      incomingGroups.set(edge.target, [...(incomingGroups.get(edge.target) ?? []), edge]);
+    }
+    for (const [sourceId, edges] of outgoingGroups) {
+      const sorted = [...edges].sort((a, b) => {
+        const ay = (graphNodeMap.get(a.target)?.position?.y ?? 0);
+        const by = (graphNodeMap.get(b.target)?.position?.y ?? 0);
+        return ay - by;
+      });
+      outgoingCountMap.set(sourceId, sorted.length);
+      sorted.forEach((edge, index) => outgoingRankMap.set(edge.id, index));
+    }
+    for (const [targetId, edges] of incomingGroups) {
+      const sorted = [...edges].sort((a, b) => {
+        const ay = (graphNodeMap.get(a.source)?.position?.y ?? 0);
+        const by = (graphNodeMap.get(b.source)?.position?.y ?? 0);
+        return ay - by;
+      });
+      incomingCountMap.set(targetId, sorted.length);
+      sorted.forEach((edge, index) => incomingRankMap.set(edge.id, index));
+    }
+    for (const edge of graph.edges) {
+      edgeContextMap.set(edge.id, {
+        sourceType: graphNodeMap.get(edge.source)?.type,
+        targetType: graphNodeMap.get(edge.target)?.type,
+        sourceRank: outgoingRankMap.get(edge.id),
+        sourceCount: outgoingCountMap.get(edge.source),
+        targetRank: incomingRankMap.get(edge.id),
+        targetCount: incomingCountMap.get(edge.target),
+      });
+    }
 
     // 所有写操作包在 editor.run 里聚成一个 history 步骤(撤销/重做语义清晰)。
     // canvas-node-edit-layout:节点已可由用户拖动,不再 isLocked,也不需要 ignoreShapeLock。
@@ -252,21 +964,33 @@ function CanvasSync({
 
     // 连线：为每条 edge 建一条两端 bound 到源/目标节点的 arrow（只建一次）。
       for (const edge of graph.edges) {
-        if (syncedEdgesRef.current.has(edge.id)) continue;
         if (!currentIds.has(edge.source) || !currentIds.has(edge.target)) continue;
         const arrowId = createShapeId(`arrow-${edge.id}`);
-        editor.createShape({ id: arrowId, type: 'arrow', x: 0, y: 0 } as unknown as Parameters<typeof editor.createShape>[0]);
-        editor.createBindings([
-          { fromId: arrowId, toId: createShapeId(edge.source), type: 'arrow',
-            props: { terminal: 'start', normalizedAnchor: { x: 0.5, y: 0.5 }, isExact: false, isPrecise: false } },
-          { fromId: arrowId, toId: createShapeId(edge.target), type: 'arrow',
-            props: { terminal: 'end', normalizedAnchor: { x: 0.5, y: 0.5 }, isExact: false, isPrecise: false } },
-        ] as unknown as Parameters<typeof editor.createBindings>[0]);
-        editor.updateShape({
-          id: arrowId,
-          type: 'arrow',
-          ...getSystemArrowShape(edge),
-        } as unknown as Parameters<typeof editor.updateShape>[0]);
+        const exists = !!editor.getShape(arrowId);
+        if (!exists) {
+          editor.createShape({
+            id: arrowId,
+            type: 'arrow',
+            x: 0,
+            y: 0,
+            props: getArrowVisualProps(edge.id),
+          } as unknown as Parameters<typeof editor.createShape>[0]);
+          editor.createBindings([
+            { fromId: arrowId, toId: createShapeId(edge.source), type: 'arrow',
+              props: { terminal: 'start', normalizedAnchor: { x: 0.5, y: 0.5 }, isExact: false, isPrecise: false } },
+            { fromId: arrowId, toId: createShapeId(edge.target), type: 'arrow',
+              props: { terminal: 'end', normalizedAnchor: { x: 0.5, y: 0.5 }, isExact: false, isPrecise: false } },
+          ] as unknown as Parameters<typeof editor.createBindings>[0]);
+        }
+        applyArrowVisualStyle(editor, arrowId, edge.id, { isLocked: true, opacity: 0 });
+        updateArrowBindingsForRects(
+          editor,
+          arrowId,
+          getGraphRect(edge.source),
+          getGraphRect(edge.target),
+          edge.id,
+          edgeContextMap.get(edge.id),
+        );
         syncedEdgesRef.current.add(edge.id);
       }
 
@@ -275,20 +999,38 @@ function CanvasSync({
         for (const userArrow of savedUserArrows) {
           if (!currentIds.has(userArrow.from) || !currentIds.has(userArrow.to) || userArrow.from === userArrow.to) continue;
           const arrowId = createShapeId(userArrow.id);
-          if (editor.getShape(arrowId)) continue;
-          editor.createShape({
-            id: arrowId,
-            type: 'arrow',
-            x: 0,
-            y: 0,
+          const exists = !!editor.getShape(arrowId);
+          if (!exists) {
+            editor.createShape({
+              id: arrowId,
+              type: 'arrow',
+              x: 0,
+              y: 0,
+              meta: { [USER_ARROW_META_KEY]: true },
+              props: getArrowVisualProps(userArrow.id),
+            } as unknown as Parameters<typeof editor.createShape>[0]);
+            editor.createBindings([
+              { fromId: arrowId, toId: createShapeId(userArrow.from), type: 'arrow',
+                props: { terminal: 'start', normalizedAnchor: { x: 0.5, y: 0.5 }, isExact: false, isPrecise: false } },
+              { fromId: arrowId, toId: createShapeId(userArrow.to), type: 'arrow',
+                props: { terminal: 'end', normalizedAnchor: { x: 0.5, y: 0.5 }, isExact: false, isPrecise: false } },
+            ] as unknown as Parameters<typeof editor.createBindings>[0]);
+          }
+          applyArrowVisualStyle(editor, arrowId, userArrow.id, {
             meta: { [USER_ARROW_META_KEY]: true },
-          } as unknown as Parameters<typeof editor.createShape>[0]);
-          editor.createBindings([
-            { fromId: arrowId, toId: createShapeId(userArrow.from), type: 'arrow',
-              props: { terminal: 'start', normalizedAnchor: { x: 0.5, y: 0.5 }, isExact: false, isPrecise: false } },
-            { fromId: arrowId, toId: createShapeId(userArrow.to), type: 'arrow',
-              props: { terminal: 'end', normalizedAnchor: { x: 0.5, y: 0.5 }, isExact: false, isPrecise: false } },
-          ] as unknown as Parameters<typeof editor.createBindings>[0]);
+            opacity: 1,
+          });
+          updateArrowBindingsForRects(
+            editor,
+            arrowId,
+            getGraphRect(userArrow.from),
+            getGraphRect(userArrow.to),
+            userArrow.id,
+            {
+              sourceType: graphNodeMap.get(userArrow.from)?.type,
+              targetType: graphNodeMap.get(userArrow.to)?.type,
+            },
+          );
         }
         restoredUserArrowsForProjectRef.current = projectId;
       }
@@ -338,16 +1080,36 @@ function CanvasSync({
     const flush = () => {
       saveUserArrowsTimerRef.current = null;
       const rows: UserArrowRecord[] = [];
+      const getShapeRect = (shapeId: string) => {
+        const shape = editor.getShape(createShapeId(shapeId)) as unknown as ManjuShapeView | undefined;
+        if (!shape || shape.type !== 'manjuNode') return null;
+        return {
+          x: shape.x,
+          y: shape.y,
+          w: shape.props.w ?? MANJU_NODE_SIZE.script.w,
+          h: shape.props.h ?? MANJU_NODE_SIZE.script.h,
+        };
+      };
       for (const id of editor.getCurrentPageShapeIds()) {
         const shape = editor.getShape(id) as unknown as ArrowShapeView | undefined;
         if (!shape || shape.type !== 'arrow' || shape.isLocked) continue;
         const shapeId = stripShapePrefix(String(id));
         const nextMeta = { ...(shape.meta ?? {}), [USER_ARROW_META_KEY]: true };
-        if (shape.meta?.[USER_ARROW_META_KEY] !== true) {
+        const desiredVisualProps = getArrowVisualProps(shapeId);
+        const shouldApplyVisualProps = shape.props?.kind !== desiredVisualProps.kind
+          || shape.props?.arrowheadEnd !== desiredVisualProps.arrowheadEnd
+          || shape.props?.arrowheadStart !== desiredVisualProps.arrowheadStart
+          || typeof shape.props?.bend !== 'number';
+        if (shape.meta?.[USER_ARROW_META_KEY] !== true || shouldApplyVisualProps) {
           editor.updateShape({
             id,
             type: 'arrow',
+            opacity: 1,
             meta: nextMeta,
+            props: {
+              ...shape.props,
+              ...desiredVisualProps,
+            },
           } as unknown as Parameters<typeof editor.updateShape>[0]);
         }
         const record = getUserArrowRecord(editor, shapeId);
@@ -360,6 +1122,13 @@ function CanvasSync({
           }
           continue;
         }
+        updateArrowBindingsForRects(
+          editor,
+          id,
+          getShapeRect(record.from),
+          getShapeRect(record.to),
+          record.id,
+        );
         rows.push(record);
       }
       saveUserArrows(projectId, rows);
@@ -413,12 +1182,22 @@ function CanvasInner() {
   const projectName = useStore((s) => s.projectName);
   const setProjectId = useStore((s) => s.setProjectId);
   const setProjectName = useStore((s) => s.setProjectName);
-  const { data: projects } = useProjects({ pageSize: 10 });
+  const { data: projects, isError: projectsError } = useProjects({ pageSize: 10 });
   const { data: script } = useScript(projectId ?? undefined);
   const { data: shots, refetch: refetchShots } = useShots(projectId ?? undefined);
   const { data: characters } = useAssets({ type: 'character' });
+  const demoCanvasMode = import.meta.env.DEV && isDemoCanvasProjectId(projectId);
   const updateScript = useUpdateScript(projectId ?? '');
   const updateProject = useUpdateProject();
+  const currentProject = useMemo(
+    () => projects?.data?.find((project) => project.id === projectId) ?? null,
+    [projectId, projects?.data],
+  );
+  const hasVoice = useMemo(
+    () => (shots?.length ?? 0) > 0 && (shots ?? []).every((shot) => !!shot.voice_id),
+    [shots],
+  );
+  const hasVideo = currentProject?.status === 'done';
   // 阶段追踪器（稳定单例）——只追踪 stage/step 与创意设定，不生产对话文案。
   const [sm] = useState(() => new AgentStateMachine());
   const [agentState, setAgentState] = useState(sm.state);
@@ -433,8 +1212,10 @@ function CanvasInner() {
   const titleGenStartedRef = useRef(false);
   const [loading, setLoading] = useState(false);
   const [assetPanelOpen, setAssetPanelOpen] = useState(false);
-  // 被点中的节点 → 渲染单节点优化面板。P5 完成后会取代 handleNodeClick 里的全局对话注入;
-  // P2 阶段并存:点节点同时设此 state(开面板)和走原 focus turn(保留全局对话),降合并风险。
+  const [assistantOpen, setAssistantOpen] = useState(false);
+  const [objectWorkbenchOpen, setObjectWorkbenchOpen] = useState(false);
+  const [assistantAnchor, setAssistantAnchor] = useState<OverlayAnchor | null>(null);
+  const [objectWorkbenchAnchor, setObjectWorkbenchAnchor] = useState<OverlayAnchor | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   // 从聊天框拖拽/粘贴/选择的参考图：暂存待上传，打开上传弹窗。
   const [pendingImage, setPendingImage] = useState<File | null>(null);
@@ -450,8 +1231,14 @@ function CanvasInner() {
       const first = projects.data[0];
       setProjectId(first.id);
       setProjectName(first.name);
+      return;
     }
-  }, [projectId, projects, setProjectId, setProjectName]);
+
+    if (!projectId && import.meta.env.DEV && (projectsError || projects?.data?.length === 0)) {
+      setProjectId(DEMO_CANVAS_PROJECT_ID);
+      setProjectName(DEMO_CANVAS_PROJECT_NAME);
+    }
+  }, [projectId, projects, projectsError, setProjectId, setProjectName]);
 
   // 初始化：依据项目已有数据恢复阶段；首条问候交由 chat() 在 idea 阶段产生，
   // 这里只在「有产物」时落一条进度态恢复提示，空项目则发一条欢迎语 turn。
@@ -461,12 +1248,12 @@ function CanvasInner() {
     conversationStartedRef.current = true;
     const hasScript = !!script?.content;
     const hasShots = (shots?.length ?? 0) > 0;
-    sm.restore({ hasScript, hasShots, hasVoice: false, hasVideo: false });
+    sm.restore({ hasScript, hasShots, hasVoice, hasVideo });
     syncState();
     setMessages([
       makeAiMessage('嗨，我是你的创作搭档。想做个什么样的短片？随便聊聊就行——一句灵感、一个画面，都可以。', { stage: 'idea' }),
     ]);
-  }, [projectId, script, shots, syncState, sm]);
+  }, [projectId, script, shots, syncState, sm, hasVoice, hasVideo]);
 
   // ---- 制作动作：由对话 trigger 显式触发，不再由状态机 step 监听自动跑。 ----
   // 每个都自带忙碌守卫，跑完用 markReady 落进度态 + 一条结果消息。
@@ -568,6 +1355,42 @@ function CanvasInner() {
     }
   }, [projectId, sm, syncState]);
 
+  const aiRuntimeStatus = sm.state.stage === 'storyboard' && sm.state.step === 'generating'
+    ? 'running'
+    : 'idle';
+  const derivedState = useMemo(
+    () => deriveCanvasState({
+      stage: sm.state.stage,
+      script,
+      shots,
+      characters: demoCanvasMode ? demoCanvasCharacters : characters?.data,
+      aiStatus: aiRuntimeStatus,
+      hasVoice,
+      hasVideo,
+    }),
+    [sm.state.stage, script, shots, characters?.data, aiRuntimeStatus, hasVoice, hasVideo, demoCanvasMode],
+  );
+  const graph = useMemo(
+    () => buildCanvasGraph(
+      script,
+      shots,
+      demoCanvasMode ? demoCanvasCharacters : characters?.data,
+      projectName,
+      aiRuntimeStatus,
+      undefined,
+      projectId,
+      derivedState,
+      { hasVoice, hasVideo },
+    ),
+    [script, shots, characters?.data, projectName, aiRuntimeStatus, projectId, derivedState, hasVoice, hasVideo, demoCanvasMode],
+  );
+  const {
+    layoutedGraph,
+    routedEdges,
+    relayout,
+    isLayouting,
+  } = useCanvasAutoLayout(graph, projectId);
+
   // trigger 越权校验：只执行「当前 stage 允许的那一个 action」，非法忽略。
   const executeTrigger = useCallback((trigger: ChatTrigger | null) => {
     if (!trigger) return;
@@ -583,7 +1406,10 @@ function CanvasInner() {
 
   // 统一的对话一轮：全程任意 stage 都走这条 chat() 路径。后端依 stage 给出
   // 自然回应 + 动态 options + 可能的 trigger；前端 merge 设定、落消息、校验 trigger。
-  const runAgentTurn = useCallback(async (pendingUserText?: string) => {
+  const runAgentTurn = useCallback(async (
+    pendingUserText?: string,
+    turnContext?: TurnContext,
+  ) => {
     if (!projectId) return;
     setLoading(true);
     try {
@@ -595,6 +1421,19 @@ function CanvasInner() {
       if (pendingUserText?.trim()) {
         history.push({ role: 'user', content: pendingUserText.trim() });
       }
+      const nodeMap = new Map(layoutedGraph.nodes.map((node) => [node.id, node] as const));
+      const selectedNodeForTurn = turnContext?.canvas_action?.target_id ?? selectedNodeId;
+      const focusMemory = buildFocusMemory(selectedNodeForTurn ?? null, nodeMap);
+      const canvasContextSummary = buildCanvasContextSummary({
+        stage: sm.state.stage,
+        nodeMap,
+        selectedNodeId: selectedNodeForTurn ?? null,
+        scriptExists: !!script?.content,
+        shotsCount: shots?.length ?? 0,
+        hasVoice,
+        hasVideo,
+        derivedState,
+      });
       const res = await chat({
         project_id: projectId,
         stage: sm.state.stage,
@@ -602,20 +1441,34 @@ function CanvasInner() {
         context: {
           has_script: !!script?.content,
           has_shots: (shots?.length ?? 0) > 0,
-          has_voice: false,
-          has_video: false,
+          has_voice: hasVoice,
+          has_video: hasVideo,
           idea: sm.state.ideaContext as Record<string, string>,
+          conversation_memory: {
+            idea: sm.state.ideaContext as Record<string, string>,
+            stage: sm.state.stage,
+            selected_node_id: selectedNodeForTurn ?? null,
+          },
+          canvas_context_summary: canvasContextSummary,
+          focus_memory: focusMemory,
+          turn_context: turnContext ?? {
+            intent_source: pendingUserText?.trim() ? 'chat_input' : 'system_event',
+            expects: pendingUserText?.trim() ? 'decision_support' : 'explanation',
+          },
         },
       });
       sm.mergeIdeaContext(res.extracted);
       setMessages((m) => [...m, makeAiMessage(res.reply, { thinking: res.thinking, options: res.options, stage: sm.state.stage })]);
       executeTrigger(res.trigger);
-    } catch {
-      setMessages((m) => [...m, makeAiMessage('网络出了点问题，请再试一次。', { stage: sm.state.stage })]);
+    } catch (error) {
+      const message = error instanceof Error && error.message
+        ? error.message
+        : '网络出了点问题，请再试一次。';
+      setMessages((m) => [...m, makeAiMessage(message, { stage: sm.state.stage })]);
     } finally {
       setLoading(false);
     }
-  }, [projectId, script, shots, sm, executeTrigger]);
+  }, [projectId, script, shots, sm, executeTrigger, layoutedGraph.nodes, selectedNodeId, hasVoice, hasVideo, derivedState]);
 
   // 用户第一句话后，调 LLM 生成一个简短标题并存为项目名。只跑一次。
   // 若用户已经手动改过名字（非空且非默认占位），不覆盖。
@@ -658,14 +1511,20 @@ function CanvasInner() {
     queueMicrotask(() => {
       setMessages([makeUserMessage(idea)]);
       void maybeGenerateTitle(idea);
-      void runAgentTurn(idea);
+      void runAgentTurn(idea, {
+        intent_source: 'chat_input',
+        expects: 'decision_support',
+      });
     });
   }, [location.state, projectId, sm, runAgentTurn, maybeGenerateTitle]);
 
   // 快捷回复点选 = 一次用户 turn，喂回统一对话。
   const handleSelectOption = useCallback((value: string) => {
     setMessages((m) => [...m, makeUserMessage(value)]);
-    void runAgentTurn(value);
+    void runAgentTurn(value, {
+      intent_source: 'chat_input',
+      expects: 'decision_support',
+    });
   }, [runAgentTurn]);
 
   // 点选剧本候选卡：取出该方向全文 → 保存进剧本 → 停在 script/ready，
@@ -694,7 +1553,10 @@ function CanvasInner() {
     if (sm.state.stage === 'idea') {
       void maybeGenerateTitle(text); // 首句话后顺带生成标题（幂等）
     }
-    await runAgentTurn(text);
+    await runAgentTurn(text, {
+      intent_source: 'chat_input',
+      expects: 'decision_support',
+    });
   }, [sm, runAgentTurn, maybeGenerateTitle]);
 
   // 动作消息（目前只剩「重试」类）：按当前 stage 重新触发对应制作。
@@ -709,11 +1571,17 @@ function CanvasInner() {
     }
   }, [projectId, sm, runScriptGen, runStoryboardGen, runVoiceMatch, runRender]);
 
-  // 点选画布节点 → 开单节点优化面板（canvas-node-optimize-panel）。
-  // 原本同时注入全局对话 focus turn，本次 P5 已移除——节点优化与全局对话彻底隔离。
+  // 点选画布节点 = 直接进入对象工作台，并围绕该对象拉起一轮协作。
   const handleNodeClick = useCallback((nodeId: string) => {
+    const node = layoutedGraph.nodes.find((item) => item.id === nodeId);
+    const isSameNode = selectedNodeId === nodeId;
     setSelectedNodeId(nodeId);
-  }, []);
+    setAssistantOpen(false);
+    setObjectWorkbenchOpen(true);
+    if (!node) return;
+    if (objectWorkbenchOpen && isSameNode) return;
+    void runAgentTurn(undefined, turnContextForNode(node));
+  }, [layoutedGraph.nodes, objectWorkbenchOpen, runAgentTurn, selectedNodeId]);
 
   // 聊天框拖拽/粘贴/选择参考图 → 暂存并打开上传弹窗（角色资产，自动落画布）。
   const handleAttachImage = useCallback((file: File) => {
@@ -725,17 +1593,19 @@ function CanvasInner() {
     busyRef.current = false;
     setLoading(false);
     setSelectedNodeId(null);
+    setObjectWorkbenchOpen(false);
+    setAssistantOpen(true);
     setPendingImage(null);
     setAssetPanelOpen(false);
 
     const hasScript = !!script?.content;
     const hasShots = (shots?.length ?? 0) > 0;
-    sm.restore({ hasScript, hasShots, hasVoice: false, hasVideo: false });
+    sm.restore({ hasScript, hasShots, hasVoice, hasVideo });
     syncState();
 
     const next = getConversationResetMessage({ hasScript, hasShots });
     setMessages([makeAiMessage(next.text, { stage: next.stage })]);
-  }, [script, shots, sm, syncState]);
+  }, [script, shots, sm, syncState, hasVoice, hasVideo]);
 
   // 参考图上传成功 → 资产已创建，再把它以 character_ref 关联到当前项目
   // （这样生成时后端能按 project 拉到它喂模型）。react-query 失效 ['assets']
@@ -766,11 +1636,6 @@ function CanvasInner() {
     setAssetPanelOpen(false);
   }, []);
 
-  // Build graph
-  const graph = useMemo(
-    () => buildCanvasGraph(script, shots, characters?.data, projectName, 'idle', undefined, projectId),
-    [script, shots, characters?.data, projectName, projectId],
-  );
   const suggestedPrompts = useMemo(() => {
     switch (agentState.stage) {
       case 'idea':
@@ -787,37 +1652,252 @@ function CanvasInner() {
         return ['继续创作'];
     }
   }, [agentState.stage]);
+  const nodeMap = useMemo(
+    () => new Map(layoutedGraph.nodes.map((node) => [node.id, node] as const)),
+    [layoutedGraph.nodes],
+  );
+  const selectedNode = selectedNodeId ? nodeMap.get(selectedNodeId) : undefined;
+  const hasWorkbenchOpen = assistantOpen || objectWorkbenchOpen;
+  const focusLabel = selectedNode ? getNodeLabel(selectedNode) : null;
+  const focusTypeLabel = selectedNode ? getNodeFocusTypeLabel(selectedNode) : null;
+  const focusTask = selectedNode ? getNodeStageTask(selectedNode, agentState.stage) : null;
+
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor || !selectedNodeId || !objectWorkbenchOpen) {
+      setObjectWorkbenchAnchor(null);
+      return;
+    }
+
+    let frame = 0;
+    const updateAnchor = () => {
+      const bounds = editor.getShapePageBounds(createShapeId(selectedNodeId));
+      if (!bounds) {
+        setObjectWorkbenchAnchor(null);
+        return;
+      }
+
+      const topRight = editor.pageToScreen({ x: bounds.maxX, y: bounds.y });
+      const topLeft = editor.pageToScreen({ x: bounds.x, y: bounds.y });
+      const bottomLeft = editor.pageToScreen({ x: bounds.x, y: bounds.maxY });
+      const viewportWidth = window.innerWidth;
+      const viewportHeight = window.innerHeight;
+      const nodeType = selectedNode?.type;
+      const prefs = getObjectWorkbenchLayoutPrefs(nodeType, viewportWidth, viewportHeight);
+      const { compact, width, maxHeight, horizontalGap, verticalPlacement } = prefs;
+      const safeTop = 68;
+      const safeBottom = 24;
+      const safeLeft = 16;
+      const safeRight = 16;
+
+      let left = topRight.x + horizontalGap;
+      const rightLimit = viewportWidth - width - safeRight;
+      const leftCandidate = topLeft.x - width - horizontalGap;
+      const canPlaceRight = left <= rightLimit;
+      const canPlaceLeft = leftCandidate >= safeLeft;
+
+      if (compact) {
+        left = Math.max(safeLeft, Math.min(rightLimit, (viewportWidth - width) / 2));
+      } else if (canPlaceRight) {
+        left = Math.min(rightLimit, left);
+      } else if (canPlaceLeft) {
+        left = leftCandidate;
+      } else {
+        left = Math.max(safeLeft, Math.min(rightLimit, (viewportWidth - width) / 2));
+      }
+
+      const nodeMidY = (topRight.y + bottomLeft.y) / 2;
+      const preferredTop = compact
+        ? bottomLeft.y + 16
+        : verticalPlacement === 'centered'
+          ? nodeMidY - maxHeight / 2
+          : verticalPlacement === 'below'
+            ? bottomLeft.y + 14
+            : topRight.y - 8;
+      const top = Math.max(
+        safeTop,
+        Math.min(viewportHeight - maxHeight - safeBottom, preferredTop),
+      );
+
+      setObjectWorkbenchAnchor((current) => {
+        if (
+          current
+          && Math.abs(current.left - left) < 0.5
+          && Math.abs(current.top - top) < 0.5
+          && Math.abs(current.width - width) < 0.5
+          && Math.abs(current.maxHeight - maxHeight) < 0.5
+          && current.compact === compact
+        ) {
+          return current;
+        }
+        return { left, top, width, maxHeight, compact };
+      });
+      frame = window.requestAnimationFrame(updateAnchor);
+    };
+
+    frame = window.requestAnimationFrame(updateAnchor);
+    window.addEventListener('resize', updateAnchor);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener('resize', updateAnchor);
+    };
+  }, [selectedNodeId, selectedNode?.type, layoutedGraph.nodes, objectWorkbenchOpen]);
+
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor || !selectedNodeId || !assistantOpen) {
+      setAssistantAnchor(null);
+      return;
+    }
+
+    let frame = 0;
+    const updateAnchor = () => {
+      const bounds = editor.getShapePageBounds(createShapeId(selectedNodeId));
+      if (!bounds) {
+        setAssistantAnchor(null);
+        return;
+      }
+
+      const topRight = editor.pageToScreen({ x: bounds.maxX, y: bounds.y });
+      const topLeft = editor.pageToScreen({ x: bounds.x, y: bounds.y });
+      const bottomLeft = editor.pageToScreen({ x: bounds.x, y: bounds.maxY });
+      const viewportWidth = window.innerWidth;
+      const viewportHeight = window.innerHeight;
+      const compact = viewportWidth < 1220;
+      const width = compact
+        ? Math.min(viewportWidth - 24, 392)
+        : Math.min(Math.max(320, Math.round(viewportWidth * 0.23)), 372);
+      const maxHeight = Math.min(viewportHeight - 128, 620);
+      const safeTop = 72;
+      const safeBottom = 28;
+      const safeLeft = 16;
+      const safeRight = 16;
+      const rightLimit = viewportWidth - width - safeRight;
+      const leftCandidate = topLeft.x - width - 18;
+      let left = leftCandidate >= safeLeft ? leftCandidate : topRight.x + 18;
+
+      if (compact) {
+        left = Math.max(safeLeft, Math.min(rightLimit, (viewportWidth - width) / 2));
+      } else if (left > rightLimit) {
+        left = Math.max(safeLeft, rightLimit);
+      }
+
+      const preferredTop = compact ? bottomLeft.y + 18 : topRight.y + 20;
+      const top = Math.max(
+        safeTop,
+        Math.min(viewportHeight - maxHeight - safeBottom, preferredTop),
+      );
+
+      setAssistantAnchor((current) => {
+        if (
+          current
+          && Math.abs(current.left - left) < 0.5
+          && Math.abs(current.top - top) < 0.5
+          && Math.abs(current.width - width) < 0.5
+          && Math.abs(current.maxHeight - maxHeight) < 0.5
+          && current.compact === compact
+        ) {
+          return current;
+        }
+        return { left, top, width, maxHeight, compact };
+      });
+      frame = window.requestAnimationFrame(updateAnchor);
+    };
+
+    frame = window.requestAnimationFrame(updateAnchor);
+    window.addEventListener('resize', updateAnchor);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener('resize', updateAnchor);
+    };
+  }, [selectedNodeId, layoutedGraph.nodes, assistantOpen]);
+
   return (
-    <div className="h-screen flex bg-background">
-      <WorkspaceRail
-        onNewConversation={handleNewConversation}
-        onOpenAssets={() => setAssetPanelOpen(true)}
-      />
-      <ChatPanel
-        messages={messages}
-        onSendMessage={handleSendMessage}
-        onSelectOption={handleSelectOption}
-        onSelectCard={handleSelectCard}
-        onAction={handleAction}
-        loading={loading}
-        stage={STAGE_LABELS[agentState.stage]}
-        suggestedPrompts={suggestedPrompts}
-        title={projectName}
-        onTitleChange={handleTitleChange}
-        onAttachImage={handleAttachImage}
-      />
-      <div className="flex-1 relative">
+    <div className="h-screen bg-background">
+      <div className="relative h-full overflow-hidden">
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-[320] px-4 pt-4">
+          <div
+            data-testid="canvas-title-strip"
+            className={cn(
+              'pointer-events-auto absolute left-1/2 top-4 flex max-w-[min(32rem,calc(100vw-9rem))] -translate-x-1/2 items-center gap-2 rounded-full border border-border/70 bg-background/62 px-3 py-1.5 shadow-[0_10px_28px_rgba(15,23,42,0.14)] backdrop-blur-xl transition duration-200',
+              hasWorkbenchOpen && 'invisible opacity-0 translate-y-[-6px] pointer-events-none',
+            )}
+          >
+            <div className="truncate text-[13px] font-medium text-foreground">
+              {projectName || '未命名项目'}
+            </div>
+            <span className="h-1 w-1 shrink-0 rounded-full bg-primary/70" />
+            <span className="truncate text-[11px] font-medium text-muted-foreground">
+              {STAGE_LABELS[agentState.stage]}
+            </span>
+          </div>
+
+          <div
+            data-testid="canvas-tools-chrome"
+            className={cn(
+              'pointer-events-auto ml-auto flex w-fit items-center gap-1.5 transition duration-200',
+              hasWorkbenchOpen && 'invisible opacity-0 translate-y-[-6px] pointer-events-none',
+            )}
+          >
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-10 w-10 rounded-[18px] border-border/80 bg-background/72 shadow-[0_14px_36px_rgba(15,23,42,0.18)] backdrop-blur-xl"
+                  aria-label="画布工具"
+                  data-testid="canvas-tools-trigger"
+                  title="画布工具"
+                >
+                  <MoreHorizontal className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" sideOffset={10} className="w-44 rounded-2xl border-border/80 bg-background/92 p-1.5 backdrop-blur-xl">
+                <DropdownMenuItem onClick={handleNewConversation} className="rounded-xl">
+                  <MessageSquarePlus className="h-4 w-4" />
+                  新对话
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setAssetPanelOpen(true)} className="rounded-xl">
+                  <FolderOpen className="h-4 w-4" />
+                  资产库
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </div>
+
+        {!assistantOpen && !objectWorkbenchOpen && (
+          <TooltipProvider delayDuration={120}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setObjectWorkbenchOpen(false);
+                    setAssistantOpen(true);
+                  }}
+                  data-testid="canvas-assistant-entry"
+                  className="group pointer-events-auto absolute bottom-24 left-3 z-[315] inline-flex h-9 w-9 items-center gap-1.5 overflow-hidden rounded-full border border-border/60 bg-background/52 px-2.5 text-[11px] font-medium text-foreground/68 shadow-[0_8px_20px_rgba(15,23,42,0.10)] backdrop-blur-lg transition-[width,background-color,color,box-shadow,border-color] duration-200 hover:w-[7.5rem] hover:border-border/80 hover:bg-background/74 hover:text-foreground focus-visible:w-[7.5rem] focus-visible:border-border/80 focus-visible:bg-background/74 focus-visible:text-foreground"
+                  aria-label="主创协作"
+                  title="主创协作"
+                >
+                  <MessageSquareText className="h-3.5 w-3.5 shrink-0 text-primary/88" />
+                  <span className="max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-all duration-200 group-hover:max-w-20 group-hover:opacity-100 group-focus-visible:max-w-20 group-focus-visible:opacity-100">
+                    {selectedNode ? '讨论' : '协作'}
+                  </span>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="right">
+                {selectedNode ? '围绕当前焦点继续协作' : '继续主创协作'}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        )}
+
         <Tldraw hideUi shapeUtils={MANJU_SHAPE_UTILS} onMount={(editor) => { editorRef.current = editor; }}>
-          <CanvasSync graph={graph} projectId={projectId} onNodeSelect={handleNodeClick} />
-          <CanvasToolbar />
-          {selectedNodeId && (
-            <NodeOptimizePanel
-              key={selectedNodeId}
-              nodeId={selectedNodeId}
-              projectId={projectId}
-              onClose={() => setSelectedNodeId(null)}
-            />
-          )}
+          <CanvasSync graph={layoutedGraph} projectId={projectId} onNodeSelect={handleNodeClick} />
+          <CanvasEdgeBridgeOverlay graph={layoutedGraph} routedEdges={routedEdges} />
+          <CanvasToolbar onAutoLayout={relayout} isLayouting={isLayouting} />
         </Tldraw>
         <AssetLibraryPanel
           open={assetPanelOpen}
@@ -834,6 +1914,77 @@ function CanvasInner() {
           initialFile={pendingImage}
           onUploaded={handleImageUploaded}
         />
+        {assistantOpen && !objectWorkbenchOpen && (
+          <div
+            className="absolute z-[340] overflow-hidden rounded-[28px] border border-border/40 bg-background/18 shadow-[0_18px_42px_rgba(15,23,42,0.16)] backdrop-blur-md"
+            data-testid="canvas-assistant-surface"
+            style={assistantAnchor
+              ? {
+                  left: assistantAnchor.left,
+                  top: assistantAnchor.top,
+                  width: assistantAnchor.width,
+                  height: assistantAnchor.maxHeight,
+                }
+              : {
+                  left: 16,
+                  bottom: 80,
+                  width: 'min(24rem, calc(100vw - 2rem))',
+                  height: 'min(38rem, calc(100vh - 8rem))',
+                }}
+          >
+            <button
+              type="button"
+              onClick={() => setAssistantOpen(false)}
+              className="absolute right-3.5 top-3.5 z-[2] rounded-full bg-background/42 p-1.5 text-muted-foreground/72 backdrop-blur-sm transition hover:text-foreground"
+              aria-label="收起主创协作"
+              title="收起主创协作"
+            >
+              <X className="h-4 w-4" />
+            </button>
+            <ChatPanel
+              messages={messages}
+              onSendMessage={handleSendMessage}
+              onSelectOption={handleSelectOption}
+              onSelectCard={handleSelectCard}
+              onAction={handleAction}
+              loading={loading}
+              stage={STAGE_LABELS[agentState.stage]}
+              suggestedPrompts={suggestedPrompts}
+              title={projectName}
+              onTitleChange={handleTitleChange}
+              onAttachImage={handleAttachImage}
+              focusLabel={focusLabel}
+              focusTypeLabel={focusTypeLabel}
+              focusTask={focusTask}
+              headerMode="floating"
+              className="shadow-[0_8px_20px_rgba(15,23,42,0.10)]"
+            />
+          </div>
+        )}
+
+        {objectWorkbenchOpen && selectedNode && (
+          <CanvasInlineEditorOverlay
+            node={selectedNode}
+            projectId={projectId}
+            anchor={objectWorkbenchAnchor}
+            onClose={() => setObjectWorkbenchOpen(false)}
+            messages={messages}
+            onSendMessage={handleSendMessage}
+            onSelectOption={handleSelectOption}
+            onSelectCard={handleSelectCard}
+            onAction={handleAction}
+            loading={loading}
+            stage={STAGE_LABELS[agentState.stage]}
+            suggestedPrompts={suggestedPrompts}
+            title={projectName}
+            onTitleChange={handleTitleChange}
+            onAttachImage={handleAttachImage}
+            focusLabel={focusLabel}
+            focusTypeLabel={focusTypeLabel}
+            focusTask={focusTask}
+          />
+        )}
+
       </div>
     </div>
   );

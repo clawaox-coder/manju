@@ -9,11 +9,16 @@ export type NodeEntity =
   | { kind: 'character'; assetId: string }
   | { kind: 'hub-ai' }
   | { kind: 'hub-video' }
+  | { kind: 'decision'; decisionId: string }
+  | { kind: 'risk'; riskId: string }
   | { kind: 'unknown'; raw: string };
 
 export function resolveNodeEntity(nodeId: string): NodeEntity {
   if (nodeId === 'ai-gen') return { kind: 'hub-ai' };
   if (nodeId === 'video-out') return { kind: 'hub-video' };
+  if (nodeId.startsWith('decision-')) return { kind: 'decision', decisionId: nodeId };
+  if (nodeId.startsWith('gate-')) return { kind: 'decision', decisionId: nodeId };
+  if (nodeId.startsWith('risk-')) return { kind: 'risk', riskId: nodeId };
 
   const scene = nodeId.match(/^script-(\d+)$/);
   if (scene) return { kind: 'script-scene', sceneIndex: Number(scene[1]) };

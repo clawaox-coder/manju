@@ -6,6 +6,7 @@
 // 兼容性:旧 schema(nodes/edges full state)亦能读出 position(用于平滑迁移)。
 
 const STORAGE_PREFIX = 'manju.canvas.';
+const LAYOUT_STORAGE_PREFIX = 'manju.canvas.layout.';
 export const USER_ARROW_META_KEY = 'manjuUserArrow';
 
 export interface PositionRecord {
@@ -41,6 +42,10 @@ interface LegacySchema {
 
 function getStorageKey(projectId: string): string {
   return STORAGE_PREFIX + projectId;
+}
+
+function getLayoutStorageKey(projectId: string): string {
+  return LAYOUT_STORAGE_PREFIX + projectId;
 }
 
 function emptySchema(): PositionsSchema {
@@ -126,4 +131,20 @@ export function loadUserArrows(projectId: string): UserArrowRecord[] {
 
 export function saveUserArrows(projectId: string, userArrows: UserArrowRecord[]): void {
   saveSchema(projectId, { userArrows });
+}
+
+export function loadCanvasLayoutGraphKey(projectId: string): string | null {
+  try {
+    return localStorage.getItem(getLayoutStorageKey(projectId));
+  } catch {
+    return null;
+  }
+}
+
+export function saveCanvasLayoutGraphKey(projectId: string, graphKey: string): void {
+  try {
+    localStorage.setItem(getLayoutStorageKey(projectId), graphKey);
+  } catch {
+    // ignore persistence failures
+  }
 }

@@ -77,7 +77,7 @@ func FromEnv() (Config, error) {
 		return c, errors.New("JWT_PRIVATE_KEY_PATH and JWT_PUBLIC_KEY_PATH are required")
 	}
 
-	corsRaw := getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:5174,http://localhost:3000")
+	corsRaw := getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:5174,http://localhost:4173,http://127.0.0.1:5173,http://127.0.0.1:5174,http://127.0.0.1:4173,http://localhost:3000")
 	for _, o := range strings.Split(corsRaw, ",") {
 		if s := strings.TrimSpace(o); s != "" {
 			c.CORSOrigins = append(c.CORSOrigins, s)
@@ -88,7 +88,7 @@ func FromEnv() (Config, error) {
 	c.GitHubClientID = os.Getenv("GITHUB_CLIENT_ID")
 	c.GitHubClientSecret = os.Getenv("GITHUB_CLIENT_SECRET")
 	c.GitHubCallbackURL = getenv("GITHUB_CALLBACK_URL", "http://localhost:8001/v1/auth/oauth/github/callback")
-	c.FrontendURL = getenv("FRONTEND_URL", "http://localhost:5173")
+	c.FrontendURL = getenv("FRONTEND_URL", "http://127.0.0.1:4173")
 
 	return c, nil
 }

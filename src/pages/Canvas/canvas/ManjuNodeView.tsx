@@ -18,11 +18,12 @@ import {
 } from 'lucide-react';
 import type { ReactNode } from 'react';
 
-export type ManjuNodeType = 'script' | 'storyboard' | 'character' | 'ai' | 'video';
+export type ManjuNodeType = 'script' | 'storyboard' | 'character' | 'ai' | 'video' | 'decision' | 'risk';
 
 export interface ManjuNodeProps {
   w: number;
   h: number;
+  nodeId?: string;
   nodeType: ManjuNodeType;
   title: string;
   body: string;       // 剧本内容 / 角色描述 / 对白等
@@ -31,6 +32,8 @@ export interface ManjuNodeProps {
   status: string;     // ai/video 节点状态
 }
 
+export const MANJU_NODE_OPEN_EVENT = 'manju-node-open';
+
 // 各 type 的固定尺寸（与 buildGraph 的列布局协调）。
 export const MANJU_NODE_SIZE: Record<ManjuNodeType, { w: number; h: number }> = {
   script: { w: 260, h: 132 },
@@ -38,9 +41,20 @@ export const MANJU_NODE_SIZE: Record<ManjuNodeType, { w: number; h: number }> = 
   character: { w: 160, h: 150 },
   ai: { w: 168, h: 64 },
   video: { w: 200, h: 96 },
+  decision: { w: 224, h: 100 },
+  risk: { w: 224, h: 100 },
 };
 
 const STATUS_DOT: Record<string, string> = {
+  draft: 'bg-muted-foreground/25',
+  candidate: 'bg-sky-500',
+  selected: 'bg-sky-500',
+  locked: 'bg-green-500',
+  generating: 'bg-amber-500 animate-pulse',
+  ready: 'bg-green-500',
+  stale: 'bg-orange-500',
+  warning: 'bg-red-500',
+  archived: 'bg-muted-foreground/25',
   idle: 'bg-muted-foreground/30',
   running: 'bg-amber-500 animate-pulse',
   rendering: 'bg-amber-500 animate-pulse',
@@ -50,6 +64,15 @@ const STATUS_DOT: Record<string, string> = {
 };
 
 const STATUS_LABEL: Record<string, string> = {
+  draft: '草稿',
+  candidate: '候选',
+  selected: '当前焦点',
+  locked: '已锁定',
+  generating: '生成中',
+  ready: '就绪',
+  stale: '待刷新',
+  warning: '需确认',
+  archived: '已归档',
   idle: '待命',
   running: '生成中',
   rendering: '渲染中',
@@ -102,12 +125,40 @@ const NODE_THEME: Record<ManjuNodeType, NodeTheme> = {
     soft: 'bg-emerald-500/10',
     border: 'border-emerald-500/25',
   },
+  decision: {
+    label: '待拍板',
+    icon: CheckCircle2,
+    accent: 'text-indigo-600 dark:text-indigo-300',
+    soft: 'bg-indigo-500/10',
+    border: 'border-indigo-500/25',
+  },
+  risk: {
+    label: '风险',
+    icon: AlertTriangle,
+    accent: 'text-rose-600 dark:text-rose-300',
+    soft: 'bg-rose-500/10',
+    border: 'border-rose-500/25',
+  },
 };
 
-function NodeFrame({ nodeType, children }: { nodeType: ManjuNodeType; children: ReactNode }) {
+function NodeFrame({
+  nodeType,
+  nodeId,
+  children,
+}: {
+  nodeType: ManjuNodeType;
+  nodeId?: string;
+  children: ReactNode;
+}) {
   const theme = NODE_THEME[nodeType];
   return (
-    <div className={`relative w-full h-full overflow-hidden rounded-lg border bg-card shadow-[0_10px_24px_rgba(15,23,42,0.08)] dark:shadow-[0_12px_28px_rgba(0,0,0,0.32)] ${theme.border}`}>
+    <div
+      className={`relative w-full h-full overflow-hidden rounded-lg border bg-card shadow-[0_10px_24px_rgba(15,23,42,0.08)] dark:shadow-[0_12px_28px_rgba(0,0,0,0.32)] ${theme.border}`}
+      onDoubleClick={() => {
+        if (!nodeId) return;
+        window.dispatchEvent(new CustomEvent(MANJU_NODE_OPEN_EVENT, { detail: { nodeId } }));
+      }}
+    >
       {children}
     </div>
   );
@@ -143,11 +194,20 @@ function NodeAction() {
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const Icon = status === 'done' ? CheckCircle2 : status === 'error' ? AlertTriangle : status === 'running' || status === 'rendering' ? LoaderCircle : Clock3;
+  const doneLike = new Set(['done', 'ready', 'locked']);
+  const warningLike = new Set(['error', 'warning', 'stale']);
+  const loadingLike = new Set(['running', 'rendering', 'generating']);
+  const Icon = doneLike.has(status)
+    ? CheckCircle2
+    : warningLike.has(status)
+      ? AlertTriangle
+      : loadingLike.has(status)
+        ? LoaderCircle
+        : Clock3;
   return (
     <span className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-[9px] font-medium text-muted-foreground">
       <span className={`w-1.5 h-1.5 rounded-full ${STATUS_DOT[status] ?? STATUS_DOT.idle}`} />
-      <Icon className={`w-2.5 h-2.5 ${status === 'running' || status === 'rendering' ? 'animate-spin' : ''}`} />
+      <Icon className={`w-2.5 h-2.5 ${loadingLike.has(status) ? 'animate-spin' : ''}`} />
       {STATUS_LABEL[status] ?? STATUS_LABEL.idle}
     </span>
   );
@@ -158,7 +218,7 @@ export function renderByType(p: ManjuNodeProps) {
   switch (p.nodeType) {
     case 'storyboard':
       return (
-        <NodeFrame nodeType="storyboard">
+        <NodeFrame nodeType="storyboard" nodeId={p.nodeId}>
           <div className="relative h-[112px] bg-gradient-to-br from-slate-700 via-slate-900 to-teal-950">
             {p.imageUrl
               ? <img src={p.imageUrl} alt={p.title} className="w-full h-full object-cover" />
@@ -174,6 +234,7 @@ export function renderByType(p: ManjuNodeProps) {
             </div>
           </div>
           <div className="px-2.5 py-2">
+            <div className="mb-1"><StatusBadge status={p.status || 'draft'} /></div>
             <div className="text-[11px] font-semibold leading-tight truncate">{p.title}</div>
             <div className="mt-1 text-[10px] text-muted-foreground truncate">{p.body || '无对白'}</div>
           </div>
@@ -181,12 +242,13 @@ export function renderByType(p: ManjuNodeProps) {
       );
     case 'character':
       return (
-        <NodeFrame nodeType="character">
+        <NodeFrame nodeType="character" nodeId={p.nodeId}>
           <div className="flex h-full flex-col items-center text-center px-3 py-3.5">
             <div className="flex w-full items-center justify-between gap-1">
               <TypeBadge nodeType="character" />
               <NodeAction />
             </div>
+            <div className="mt-2"><StatusBadge status={p.status || 'ready'} /></div>
             <div className="mt-2 w-12 h-12 rounded-2xl bg-gradient-to-br from-amber-500/80 to-orange-500/80 ring-2 ring-amber-500/15 flex items-center justify-center text-white text-base font-bold overflow-hidden shrink-0">
             {p.imageUrl ? <img src={p.imageUrl} alt={p.title} className="w-full h-full object-cover" /> : (p.title[0] ?? '角')}
             </div>
@@ -197,7 +259,7 @@ export function renderByType(p: ManjuNodeProps) {
       );
     case 'ai':
       return (
-        <NodeFrame nodeType="ai">
+        <NodeFrame nodeType="ai" nodeId={p.nodeId}>
           <div className="flex h-full items-center gap-2.5 px-3 pt-1">
             <div className="w-8 h-8 rounded-lg bg-violet-500/12 text-violet-600 dark:text-violet-300 flex items-center justify-center shrink-0">
               <Sparkles className="w-4 h-4" />
@@ -216,7 +278,7 @@ export function renderByType(p: ManjuNodeProps) {
       );
     case 'video':
       return (
-        <NodeFrame nodeType="video">
+        <NodeFrame nodeType="video" nodeId={p.nodeId}>
           <div className="flex h-full flex-col px-3 py-2.5">
             <div className="flex items-center justify-between gap-2">
               <TypeBadge nodeType="video" badge={p.badge} />
@@ -231,15 +293,48 @@ export function renderByType(p: ManjuNodeProps) {
           </div>
         </NodeFrame>
       );
+    case 'decision':
+      return (
+        <NodeFrame nodeType="decision" nodeId={p.nodeId}>
+          <div className="flex h-full flex-col px-3 py-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <TypeBadge nodeType="decision" badge={p.badge} />
+              <NodeAction />
+            </div>
+            <div className="mt-1"><StatusBadge status={p.status || 'candidate'} /></div>
+            <div className="mt-2 text-xs font-semibold leading-snug">{p.title}</div>
+            <div className="mt-1 text-[10px] leading-5 text-muted-foreground line-clamp-2">
+              {p.body || '等待导演确认后继续推进。'}
+            </div>
+          </div>
+        </NodeFrame>
+      );
+    case 'risk':
+      return (
+        <NodeFrame nodeType="risk" nodeId={p.nodeId}>
+          <div className="flex h-full flex-col px-3 py-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <TypeBadge nodeType="risk" badge={p.badge} />
+              <NodeAction />
+            </div>
+            <div className="mt-1"><StatusBadge status={p.status || 'warning'} /></div>
+            <div className="mt-2 text-xs font-semibold leading-snug">{p.title}</div>
+            <div className="mt-1 text-[10px] leading-5 text-muted-foreground line-clamp-2">
+              {p.body || '当前链路里有一个需要先评估的风险。'}
+            </div>
+          </div>
+        </NodeFrame>
+      );
     case 'script':
     default:
       return (
-        <NodeFrame nodeType="script">
+        <NodeFrame nodeType="script" nodeId={p.nodeId}>
           <div className="flex h-full flex-col px-3 py-2.5">
             <div className="flex items-center justify-between gap-2">
               <TypeBadge nodeType="script" badge={p.badge} />
               <NodeAction />
             </div>
+            <div className="mt-1"><StatusBadge status={p.status || 'draft'} /></div>
             <div className="mt-2 text-xs font-semibold leading-tight truncate">{p.title}</div>
             <div className="mt-1.5 text-[11px] text-muted-foreground leading-relaxed line-clamp-3 whitespace-pre-wrap">
               {p.body || '等待生成...'}

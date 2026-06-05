@@ -22,12 +22,15 @@ class Settings(BaseSettings):
     # anthropic-beta header (启用 1m 上下文等 beta 特性). 留空走默认.
     # 中转网关可能要求显式 flag, 不能由 model 名 [1m] 后缀替代.
     anthropic_beta: str = ""
+    # 中转网关(如 packyapi)常按官方 SDK 的 User-Agent 指纹拦截(返 403)。
+    # 覆盖成非 SDK UA 即可绕过;留空则不覆盖(直连官方 api.anthropic.com 时应留空)。
+    anthropic_user_agent: str = ""
     openai_api_key: str = ""
     # 图像生成上游(OpenAI 兼容)。默认直连 OpenAI;可指向中转网关(如 packyapi)。
     # base_url 末尾不含 /generations|/edits,由 image.py 拼接。
     openai_image_base_url: str = "https://api.openai.com/v1/images"
     openai_image_model: str = "gpt-image-1"
-    cors_origins: str = "http://localhost:5173,http://localhost:5174"
+    cors_origins: str = "http://localhost:5173,http://localhost:5174,http://localhost:4173,http://127.0.0.1:5173,http://127.0.0.1:5174,http://127.0.0.1:4173"
     log_level: str = "info"
 
     @property

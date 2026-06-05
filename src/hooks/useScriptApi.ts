@@ -2,11 +2,15 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import * as api from '@/lib/api/scripts';
 import type { CreateShotInput } from '@/lib/api/scripts';
 import { rewriteScene, optimizeShot, AiOptimizeError, type RewriteSceneInput, type OptimizeShotInput } from '@/lib/api/ai';
+import { demoCanvasScript, demoCanvasShots, isDemoCanvasProjectId } from '@/pages/Canvas/demoCanvasData';
 
 export function useScript(projectId: string | undefined) {
   return useQuery({
     queryKey: ['script', projectId],
-    queryFn: () => api.getScript(projectId!),
+    queryFn: () => {
+      if (isDemoCanvasProjectId(projectId)) return Promise.resolve(demoCanvasScript);
+      return api.getScript(projectId!);
+    },
     enabled: !!projectId,
   });
 }
@@ -38,7 +42,10 @@ export function useRewriteScene(projectId: string) {
 export function useShots(projectId: string | undefined) {
   return useQuery({
     queryKey: ['shots', projectId],
-    queryFn: () => api.listShots(projectId!),
+    queryFn: () => {
+      if (isDemoCanvasProjectId(projectId)) return Promise.resolve(demoCanvasShots);
+      return api.listShots(projectId!);
+    },
     enabled: !!projectId,
   });
 }

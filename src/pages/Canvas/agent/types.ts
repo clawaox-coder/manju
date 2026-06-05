@@ -18,7 +18,7 @@ export interface IdeaContext {
 }
 
 // 阶段追踪器的状态：只剩 stage/step、累积的创意设定。
-// 节点聚焦改由 NodeOptimizePanel(canvas-node-optimize-panel)接管,不再走状态机。
+// 节点聚焦现在由画布对象工作面接管,不再走旧的状态机式节点面板。
 export interface AgentState {
   stage: Stage;
   step: Step;

@@ -1,12 +1,8 @@
 import { useEditor, useValue, createShapeId } from 'tldraw';
 import { X } from 'lucide-react';
-import { resolveNodeEntity, type NodeEntity } from '../nodeEntity';
-import { ScriptSceneVariant } from './variants/ScriptSceneVariant';
-import { ShotVariant } from './variants/ShotVariant';
-import { CharacterVariant } from './variants/CharacterVariant';
-import { AiGenVariant } from './variants/AiGenVariant';
-import { VideoOutVariant } from './variants/VideoOutVariant';
-import { PlaceholderVariant } from './variants/PlaceholderVariant';
+import { resolveNodeEntity } from '../nodeEntity';
+import { CanvasObjectWorkbench, getCanvasObjectTitleFromNodeId } from '../CanvasObjectWorkbench';
+import type { CanvasNode } from '../buildGraph';
 
 export interface NodeOptimizePanelProps {
   nodeId: string;
@@ -46,42 +42,43 @@ function useAnchorPosition(nodeId: string): { x: number; y: number } | null {
   );
 }
 
-function panelTitle(entity: NodeEntity): string {
+function inferNodeType(nodeId: string): CanvasNode['type'] {
+  const entity = resolveNodeEntity(nodeId);
   switch (entity.kind) {
-    case 'script-scene': return `剧本 · 场 ${entity.sceneIndex + 1}`;
-    case 'shot': return '分镜';
-    case 'character': return '角色';
-    case 'hub-ai': return 'AI 核心 · 整体动作';
-    case 'hub-video': return '视频输出 · 整体动作';
-    default: return '节点';
+    case 'script-scene': return 'script';
+    case 'shot': return 'storyboard';
+    case 'character': return 'character';
+    case 'hub-ai': return 'ai';
+    case 'hub-video': return 'video';
+    case 'decision': return 'decision';
+    case 'risk': return 'risk';
+    default: return undefined;
   }
 }
 
-// 按 entity.kind 分发到具体变体。每个变体自管输入/按钮/状态,因为各类型形态差异大
-// (剧本场=纯文本重写、分镜=对白+时长+图、角色=AI+直改名、枢纽=二次确认按钮),
-// 共享一个 InputBar 反而是错误抽象。
-function NodeContent({ entity, projectId, onClose }: { entity: NodeEntity; projectId: string | null; onClose: () => void }) {
-  if (!projectId) {
-    return <PlaceholderVariant text="未选择项目,无法优化。" />;
-  }
-  switch (entity.kind) {
-    case 'script-scene':
-      return <ScriptSceneVariant sceneIndex={entity.sceneIndex} projectId={projectId} onDone={onClose} />;
-    case 'shot':
-      return <ShotVariant shotId={entity.shotId} projectId={projectId} />;
-    case 'character':
-      return <CharacterVariant assetId={entity.assetId} projectId={projectId} />;
-    case 'hub-ai':
-      return <AiGenVariant projectId={projectId} />;
-    case 'hub-video':
-      return <VideoOutVariant projectId={projectId} />;
-    default:
-      return <PlaceholderVariant text="该节点暂不支持优化。" />;
-  }
+export function getNodePanelTitle(nodeId: string): string {
+  return getCanvasObjectTitleFromNodeId(nodeId);
+}
+
+export function NodeInspectorContent({
+  nodeId,
+  projectId,
+  onClose,
+}: {
+  nodeId: string;
+  projectId: string | null;
+  onClose: () => void;
+}) {
+  const node: CanvasNode = {
+    id: nodeId,
+    type: inferNodeType(nodeId),
+    position: { x: 0, y: 0 },
+    data: {},
+  };
+  return <CanvasObjectWorkbench node={node} projectId={projectId} onClose={onClose} />;
 }
 
 export function NodeOptimizePanel({ nodeId, projectId, onClose }: NodeOptimizePanelProps) {
-  const entity = resolveNodeEntity(nodeId);
   const pos = useAnchorPosition(nodeId);
   if (!pos) return null;
 
@@ -90,10 +87,10 @@ export function NodeOptimizePanel({ nodeId, projectId, onClose }: NodeOptimizePa
       className="fixed z-[400] w-[320px] max-h-[460px] flex flex-col rounded-2xl border border-border bg-background/95 backdrop-blur-xl shadow-xl"
       style={{ left: pos.x, top: pos.y }}
       role="dialog"
-      aria-label={panelTitle(entity)}
+      aria-label={getNodePanelTitle(nodeId)}
     >
       <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-border">
-        <span className="text-[12px] font-medium truncate">{panelTitle(entity)}</span>
+        <span className="text-[12px] font-medium truncate">{getNodePanelTitle(nodeId)}</span>
         <button
           type="button"
           title="关闭"
@@ -106,7 +103,7 @@ export function NodeOptimizePanel({ nodeId, projectId, onClose }: NodeOptimizePa
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        <NodeContent entity={entity} projectId={projectId} onClose={onClose} />
+        <NodeInspectorContent nodeId={nodeId} projectId={projectId} onClose={onClose} />
       </div>
     </div>
   );

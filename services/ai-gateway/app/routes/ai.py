@@ -275,6 +275,10 @@ class ChatContext(BaseModel):
     has_voice: bool = False
     has_video: bool = False
     idea: dict[str, Any] = Field(default_factory=dict)
+    conversation_memory: dict[str, Any] = Field(default_factory=dict)
+    canvas_context_summary: dict[str, Any] = Field(default_factory=dict)
+    focus_memory: dict[str, Any] = Field(default_factory=dict)
+    turn_context: dict[str, Any] = Field(default_factory=dict)
 
 
 class ChatRequest(BaseModel):

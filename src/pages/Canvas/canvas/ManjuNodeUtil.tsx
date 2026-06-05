@@ -23,12 +23,12 @@ export type ManjuNodeShape = TLBaseShape<'manjuNode', ManjuNodeProps>;
 export class ManjuNodeUtil extends ShapeUtil<any> {
   static override type = 'manjuNode' as const;
   static override props = {
-    w: T.number, h: T.number, nodeType: T.string, title: T.string,
+    w: T.number, h: T.number, nodeId: T.string, nodeType: T.string, title: T.string,
     body: T.string, badge: T.string, imageUrl: T.string, status: T.string,
   };
 
   override getDefaultProps(): ManjuNodeProps {
-    return { w: 200, h: 120, nodeType: 'script', title: '', body: '', badge: '', imageUrl: '', status: '' };
+    return { w: 200, h: 120, nodeId: '', nodeType: 'script', title: '', body: '', badge: '', imageUrl: '', status: '' };
   }
 
   // 半可编辑：可拖动、可缩放;不允许双击编辑(那是另一回事)和旋转。

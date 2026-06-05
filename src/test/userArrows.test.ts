@@ -1,7 +1,9 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 import {
   loadCanvasPositions,
+  loadCanvasLayoutGraphKey,
   loadUserArrows,
+  saveCanvasLayoutGraphKey,
   saveCanvasPositions,
   saveUserArrows,
   USER_ARROW_META_KEY,
@@ -47,5 +49,13 @@ describe('canvas user arrow persistence', () => {
 
   it('keeps arrow meta key stable for canvas tagging', () => {
     expect(USER_ARROW_META_KEY).toBe('manjuUserArrow');
+  });
+
+  it('stores the last auto-layout graph key separately from positions', () => {
+    saveCanvasPositions(projectId, new Map([['script-1', { x: 20, y: 40 }]]));
+    saveCanvasLayoutGraphKey(projectId, 'graph:v1');
+
+    expect(loadCanvasLayoutGraphKey(projectId)).toBe('graph:v1');
+    expect(loadCanvasPositions(projectId)?.get('script-1')).toEqual({ x: 20, y: 40, w: undefined, h: undefined });
   });
 });

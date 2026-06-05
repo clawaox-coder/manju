@@ -23,7 +23,7 @@ dev: ## 本地起服务 (依赖 docker compose 已起 pg+minio)
 		S3_SECRET_KEY=manjuadmin \
 		S3_BUCKET=manju-assets \
 		S3_REGION=us-east-1 \
-		CORS_ORIGINS=http://localhost:5173,http://localhost:5174 \
+		CORS_ORIGINS=http://localhost:5173,http://localhost:5174,http://localhost:4173,http://127.0.0.1:5173,http://127.0.0.1:5174,http://127.0.0.1:4173 \
 		$(GO) run ./cmd/server
 
 test: test-unit test-integration ## 跑全部测试

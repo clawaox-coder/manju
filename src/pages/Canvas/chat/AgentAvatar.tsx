@@ -11,12 +11,14 @@ import beaverUrl from '@/assets/agents/beaver.png';
 
 export type AgentRole = 'idea' | 'script' | 'storyboard' | 'voice' | 'video';
 
-export const AGENT_META: Record<AgentRole, { name: string; emoji: string; src: string }> = {
-  idea: { name: '创意总监', emoji: '🦊', src: foxUrl },
-  script: { name: '编剧', emoji: '🦉', src: owlUrl },
-  storyboard: { name: '导演', emoji: '🐯', src: tigerUrl },
-  voice: { name: '声优', emoji: '🐱', src: catUrl },
-  video: { name: '剪辑', emoji: '🦫', src: beaverUrl },
+export const LEAD_AGENT_NAME = '主创搭档';
+
+export const AGENT_META: Record<AgentRole, { specialist: string; emoji: string; src: string }> = {
+  idea: { specialist: '创意总监', emoji: '🦊', src: foxUrl },
+  script: { specialist: '编剧', emoji: '🦉', src: owlUrl },
+  storyboard: { specialist: '分镜导演', emoji: '🐯', src: tigerUrl },
+  voice: { specialist: '配音导演', emoji: '🐱', src: catUrl },
+  video: { specialist: '后期剪辑', emoji: '🦫', src: beaverUrl },
 };
 
 interface Props {
@@ -31,7 +33,7 @@ export function AgentAvatar({ role, size = 30, busy = false }: Props) {
   return (
     <motion.img
       src={meta.src}
-      alt={meta.name}
+      alt={meta.specialist}
       draggable={false}
       style={{ width: size, height: size }}
       className="shrink-0 select-none object-contain"

@@ -204,6 +204,10 @@ export interface ChatContext {
   has_voice?: boolean;
   has_video?: boolean;
   idea?: Record<string, string>;
+  conversation_memory?: Record<string, unknown>;
+  canvas_context_summary?: Record<string, unknown>;
+  focus_memory?: Record<string, unknown>;
+  turn_context?: Record<string, unknown>;
 }
 
 export interface ChatInput {

@@ -1,6 +1,6 @@
 import { useRef } from 'react';
 import { useEditor, useValue } from 'tldraw';
-import { MousePointer2, Hand, ImagePlus, Minus, Plus, ArrowRight } from 'lucide-react';
+import { MousePointer2, Hand, ImagePlus, Minus, Plus, ArrowRight, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 /**
@@ -8,7 +8,13 @@ import { cn } from '@/lib/utils';
  * this exposes only the controls we want: select, hand (pan), media upload,
  * and a styled zoom control.
  */
-export function CanvasToolbar() {
+export function CanvasToolbar({
+  onAutoLayout,
+  isLayouting = false,
+}: {
+  onAutoLayout?: () => void;
+  isLayouting?: boolean;
+}) {
   const editor = useEditor();
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -39,7 +45,7 @@ export function CanvasToolbar() {
         className="hidden"
         onChange={onFiles}
       />
-      <div className="absolute bottom-5 left-1/2 -translate-x-1/2 z-[300] flex items-center gap-1 rounded-2xl border border-border bg-background/90 backdrop-blur-md px-1.5 py-1.5 shadow-lg">
+      <div className="absolute bottom-5 left-1/2 z-[300] flex -translate-x-1/2 items-center gap-1 rounded-[24px] border border-border bg-background/90 px-2 py-2 shadow-[0_18px_48px_rgba(15,23,42,0.22)] backdrop-blur-md">
         <ToolButton label="选择" active={tool === 'select'} onClick={() => editor.setCurrentTool('select')}>
           <MousePointer2 className="w-[18px] h-[18px]" />
         </ToolButton>
@@ -52,7 +58,17 @@ export function CanvasToolbar() {
         <ToolButton label="上传图片 / 视频" active={false} onClick={pickFiles}>
           <ImagePlus className="w-[18px] h-[18px]" />
         </ToolButton>
-        <div className="mx-1 h-6 w-px bg-border" />
+        {onAutoLayout && (
+          <ToolButton
+            label={isLayouting ? '正在整理布局' : '整理布局'}
+            active={false}
+            disabled={isLayouting}
+            onClick={onAutoLayout}
+          >
+            <RefreshCw className={cn('w-[18px] h-[18px]', isLayouting && 'animate-spin')} />
+          </ToolButton>
+        )}
+        <div className="mx-1 h-7 w-px bg-border" />
         <ZoomControl zoom={zoom} editor={editor} />
       </div>
     </>
@@ -60,11 +76,12 @@ export function CanvasToolbar() {
 }
 
 function ToolButton({
-  label, active, onClick, children,
+  label, active, onClick, disabled = false, children,
 }: {
   label: string;
   active: boolean;
   onClick: () => void;
+  disabled?: boolean;
   children: React.ReactNode;
 }) {
   return (
@@ -73,8 +90,9 @@ function ToolButton({
       title={label}
       aria-label={label}
       onClick={onClick}
+      disabled={disabled}
       className={cn(
-        'flex items-center justify-center w-9 h-9 rounded-xl transition-colors',
+        'flex items-center justify-center w-9 h-9 rounded-xl transition-colors disabled:cursor-wait disabled:opacity-60',
         active
           ? 'bg-primary text-primary-foreground'
           : 'text-muted-foreground hover:bg-accent hover:text-foreground',
@@ -93,7 +111,7 @@ function ZoomControl({
   editor: ReturnType<typeof useEditor>;
 }) {
   return (
-    <div className="flex items-center gap-0.5 rounded-xl bg-muted/50 px-0.5 py-0.5">
+    <div className="flex items-center gap-0.5 rounded-xl bg-muted/50 px-1 py-0.5">
       <button
         type="button"
         title="缩小"

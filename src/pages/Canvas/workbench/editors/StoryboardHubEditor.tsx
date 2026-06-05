@@ -25,7 +25,7 @@ async function pollUntilTerminal(taskId: string): Promise<boolean> {
   }
 }
 
-export function AiGenVariant({ projectId }: Props) {
+export function StoryboardHubEditor({ projectId }: Props) {
   const qc = useQueryClient();
   const confirm = useConfirm();
   const [style, setStyle] = useState('');
