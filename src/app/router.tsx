@@ -30,6 +30,10 @@ const lazyEl = (C: LazyExoticComponent<ComponentType>) => (
   </Suspense>
 );
 
+function canBypassAuthInDev(pathname: string) {
+  return import.meta.env.DEV && (pathname === '/canvas' || pathname === '/home');
+}
+
 function RequireAuth({ children }: { children: React.ReactNode }) {
   // Handle OAuth callback: extract tokens from URL hash fragment
   const hash = window.location.hash;
@@ -41,6 +45,10 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
       setTokens(accessToken, refreshToken);
       window.history.replaceState(null, '', window.location.pathname);
     }
+  }
+
+  if (canBypassAuthInDev(window.location.pathname)) {
+    return <>{children}</>;
   }
 
   if (!getAccessToken()) {

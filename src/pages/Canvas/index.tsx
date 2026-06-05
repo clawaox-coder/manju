@@ -37,6 +37,17 @@ import {
   isDemoCanvasProjectId,
 } from './demoCanvasData';
 import { getConversationResetMessage } from './chat/sessionReset';
+import {
+  buildEdgeContextMap,
+  buildRenderedRoute,
+  getRouteAnchors,
+  toSegments,
+  type EdgeSegment,
+  type RectLike,
+  type ScreenPoint,
+  type SmartAnchorContext,
+} from './layout/edgeRouting';
+import { buildBridgePath, buildRoundedEdgePath, shouldUseDirectVisualPath, type BridgeMarker } from './layout/edgePath';
 import { type RoutedSystemEdge } from './layout/elkLayout';
 import { useCanvasAutoLayout } from './layout/useCanvasAutoLayout';
 import { deriveCanvasState } from './canvasDerivedState';
@@ -155,28 +166,6 @@ function toManjuProps(node: CanvasGraphNode): ManjuNodeProps {
   }
 }
 
-function turnContextForNode(node?: CanvasGraphNode | null): TurnContext {
-  if (node?.type === 'decision') {
-    return {
-      intent_source: 'canvas_action',
-      canvas_action: { type: 'confirm', target_id: node.id },
-      expects: 'confirmation',
-    };
-  }
-  if (node?.type === 'risk') {
-    return {
-      intent_source: 'canvas_action',
-      canvas_action: { type: 'select', target_id: node.id },
-      expects: 'risk_review',
-    };
-  }
-  return {
-    intent_source: 'canvas_action',
-    canvas_action: { type: 'select', target_id: node?.id },
-    expects: 'explanation',
-  };
-}
-
 type OverlayAnchor = {
   left: number;
   top: number;
@@ -219,31 +208,11 @@ type ArrowBindingView = {
   };
 };
 
-type SmartAnchorContext = {
-  sourceType?: string;
-  targetType?: string;
-  sourceRank?: number;
-  sourceCount?: number;
-  targetRank?: number;
-  targetCount?: number;
-};
-
-type ScreenPoint = { x: number; y: number };
-
-type RectLike = { x: number; y: number; w: number; h: number };
-
 type OverlayEdge = {
   id: string;
   color: string;
-  segments: Array<{ a: ScreenPoint; b: ScreenPoint; orientation: 'h' | 'v' }>;
-};
-
-type BridgeMarker = {
-  edgeId: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
+  points: ScreenPoint[];
+  segments: EdgeSegment[];
 };
 
 function isUserArrowShape(shape: ArrowShapeView | undefined): boolean {
@@ -271,407 +240,6 @@ function getArrowVisualProps(seed: string) {
   } as const;
 }
 
-function getAnchorLane(seed: string): number {
-  return Math.abs(hashArrowBendSeed(seed)) % 5;
-}
-
-function getSmartAnchors(
-  fromRect: { x: number; y: number; w: number; h: number },
-  toRect: { x: number; y: number; w: number; h: number },
-  seed: string,
-  context?: SmartAnchorContext,
-): { start: { x: number; y: number }; end: { x: number; y: number } } {
-  const fromCenter = { x: fromRect.x + fromRect.w / 2, y: fromRect.y + fromRect.h / 2 };
-  const toCenter = { x: toRect.x + toRect.w / 2, y: toRect.y + toRect.h / 2 };
-  const dx = toCenter.x - fromCenter.x;
-  const dy = toCenter.y - fromCenter.y;
-  const lane = getAnchorLane(seed);
-  const laneOffsets = [0.18, 0.34, 0.5, 0.66, 0.82] as const;
-  const laneValue = laneOffsets[lane];
-  const sourceHub = context?.sourceType === 'ai' || context?.sourceType === 'video';
-  const targetHub = context?.targetType === 'ai' || context?.targetType === 'video';
-  const sourceCrowded = (context?.sourceCount ?? 0) >= 3;
-  const targetCrowded = (context?.targetCount ?? 0) >= 3;
-  const sourceLane = context?.sourceRank != null
-    ? laneOffsets[Math.min(context.sourceRank, laneOffsets.length - 1)]
-    : laneValue;
-  const targetLane = context?.targetRank != null
-    ? laneOffsets[Math.min(context.targetRank, laneOffsets.length - 1)]
-    : laneOffsets[(lane + 1) % laneOffsets.length];
-
-  if ((sourceHub || sourceCrowded) && Math.abs(dy) > 24) {
-    return {
-      start: dy >= 0 ? { x: sourceLane, y: 1 } : { x: sourceLane, y: 0 },
-      end: Math.abs(dx) >= Math.abs(dy)
-        ? (dx >= 0 ? { x: 0, y: targetLane } : { x: 1, y: targetLane })
-        : (dy >= 0 ? { x: targetLane, y: 0 } : { x: targetLane, y: 1 }),
-    };
-  }
-
-  if ((targetHub || targetCrowded) && Math.abs(dy) > 24) {
-    return {
-      start: Math.abs(dx) >= Math.abs(dy)
-        ? (dx >= 0 ? { x: 1, y: sourceLane } : { x: 0, y: sourceLane })
-        : (dy >= 0 ? { x: sourceLane, y: 1 } : { x: sourceLane, y: 0 }),
-      end: dy >= 0 ? { x: targetLane, y: 0 } : { x: targetLane, y: 1 },
-    };
-  }
-
-  if (Math.abs(dx) >= Math.abs(dy)) {
-    return dx >= 0
-      ? {
-          start: { x: 1, y: sourceLane },
-          end: { x: 0, y: targetLane },
-        }
-      : {
-          start: { x: 0, y: sourceLane },
-          end: { x: 1, y: targetLane },
-        };
-  }
-
-  return dy >= 0
-    ? {
-        start: { x: sourceLane, y: 1 },
-        end: { x: targetLane, y: 0 },
-      }
-    : {
-        start: { x: sourceLane, y: 0 },
-        end: { x: targetLane, y: 1 },
-      };
-}
-
-function buildEdgeContextMap(graph: { nodes: CanvasGraphNode[]; edges: CanvasGraphEdge[] }) {
-  const graphNodeMap = new Map(graph.nodes.map((n) => [n.id, n]));
-  const outgoingRankMap = new Map<string, number>();
-  const incomingRankMap = new Map<string, number>();
-  const outgoingCountMap = new Map<string, number>();
-  const incomingCountMap = new Map<string, number>();
-  const edgeContextMap = new Map<string, SmartAnchorContext>();
-  const outgoingGroups = new Map<string, CanvasGraphEdge[]>();
-  const incomingGroups = new Map<string, CanvasGraphEdge[]>();
-
-  for (const edge of graph.edges) {
-    outgoingGroups.set(edge.source, [...(outgoingGroups.get(edge.source) ?? []), edge]);
-    incomingGroups.set(edge.target, [...(incomingGroups.get(edge.target) ?? []), edge]);
-  }
-  for (const [sourceId, edges] of outgoingGroups) {
-    const sorted = [...edges].sort((a, b) => {
-      const ay = (graphNodeMap.get(a.target)?.position?.y ?? 0);
-      const by = (graphNodeMap.get(b.target)?.position?.y ?? 0);
-      return ay - by;
-    });
-    outgoingCountMap.set(sourceId, sorted.length);
-    sorted.forEach((edge, index) => outgoingRankMap.set(edge.id, index));
-  }
-  for (const [targetId, edges] of incomingGroups) {
-    const sorted = [...edges].sort((a, b) => {
-      const ay = (graphNodeMap.get(a.source)?.position?.y ?? 0);
-      const by = (graphNodeMap.get(b.source)?.position?.y ?? 0);
-      return ay - by;
-    });
-    incomingCountMap.set(targetId, sorted.length);
-    sorted.forEach((edge, index) => incomingRankMap.set(edge.id, index));
-  }
-  for (const edge of graph.edges) {
-    edgeContextMap.set(edge.id, {
-      sourceType: graphNodeMap.get(edge.source)?.type,
-      targetType: graphNodeMap.get(edge.target)?.type,
-      sourceRank: outgoingRankMap.get(edge.id),
-      sourceCount: outgoingCountMap.get(edge.source),
-      targetRank: incomingRankMap.get(edge.id),
-      targetCount: incomingCountMap.get(edge.target),
-    });
-  }
-  return edgeContextMap;
-}
-
-function anchorToPoint(rect: { x: number; y: number; w: number; h: number }, anchor: { x: number; y: number }): ScreenPoint {
-  return {
-    x: rect.x + rect.w * anchor.x,
-    y: rect.y + rect.h * anchor.y,
-  };
-}
-
-function pointInsideRect(point: ScreenPoint, rect: RectLike, padding = 0) {
-  return point.x >= rect.x - padding
-    && point.x <= rect.x + rect.w + padding
-    && point.y >= rect.y - padding
-    && point.y <= rect.y + rect.h + padding;
-}
-
-function segmentIntersectsRect(a: ScreenPoint, b: ScreenPoint, rect: RectLike, padding = 0) {
-  const expanded = {
-    x: rect.x - padding,
-    y: rect.y - padding,
-    w: rect.w + padding * 2,
-    h: rect.h + padding * 2,
-  };
-  if (pointInsideRect(a, expanded) || pointInsideRect(b, expanded)) return false;
-  if (Math.abs(a.x - b.x) < 0.5) {
-    const x = a.x;
-    const minY = Math.min(a.y, b.y);
-    const maxY = Math.max(a.y, b.y);
-    return x >= expanded.x
-      && x <= expanded.x + expanded.w
-      && maxY >= expanded.y
-      && minY <= expanded.y + expanded.h;
-  }
-  if (Math.abs(a.y - b.y) < 0.5) {
-    const y = a.y;
-    const minX = Math.min(a.x, b.x);
-    const maxX = Math.max(a.x, b.x);
-    return y >= expanded.y
-      && y <= expanded.y + expanded.h
-      && maxX >= expanded.x
-      && minX <= expanded.x + expanded.w;
-  }
-  return false;
-}
-
-function isVerticalAnchor(anchor: { x: number; y: number }) {
-  return anchor.y === 0 || anchor.y === 1;
-}
-
-function isHorizontalAnchor(anchor: { x: number; y: number }) {
-  return anchor.x === 0 || anchor.x === 1;
-}
-
-function getObstacleAwareAnchors(
-  fromRect: RectLike,
-  toRect: RectLike,
-  seed: string,
-  obstacles: RectLike[],
-  context?: SmartAnchorContext,
-) {
-  const anchors = getSmartAnchors(fromRect, toRect, seed, context);
-  const start = anchorToPoint(fromRect, anchors.start);
-  const end = anchorToPoint(toRect, anchors.end);
-  const dx = end.x - start.x;
-  const dy = end.y - start.y;
-  const sideLane = anchors.start.y === 0 || anchors.start.y === 1 ? anchors.start.x : anchors.start.y;
-  const endSideLane = anchors.end.y === 0 || anchors.end.y === 1 ? anchors.end.x : anchors.end.y;
-  const startProbe = isVerticalAnchor(anchors.start)
-    ? { x: start.x, y: start.y + (dy >= 0 ? 56 : -56) }
-    : { x: start.x + (dx >= 0 ? 56 : -56), y: start.y };
-  const endProbe = isVerticalAnchor(anchors.end)
-    ? { x: end.x, y: end.y + (dy >= 0 ? -56 : 56) }
-    : { x: end.x + (dx >= 0 ? -56 : 56), y: end.y };
-
-  const startBlocked = obstacles.some((rect) => segmentIntersectsRect(start, startProbe, rect, 14));
-  const endBlocked = obstacles.some((rect) => segmentIntersectsRect(end, endProbe, rect, 14));
-
-  if (startBlocked) {
-    anchors.start = Math.abs(dx) >= Math.abs(dy)
-      ? (dx >= 0 ? { x: 1, y: sideLane } : { x: 0, y: sideLane })
-      : (dx >= 0 ? { x: 1, y: 0.72 } : { x: 0, y: 0.28 });
-  }
-
-  if (endBlocked) {
-    anchors.end = Math.abs(dx) >= Math.abs(dy)
-      ? (dx >= 0 ? { x: 0, y: endSideLane } : { x: 1, y: endSideLane })
-      : (dx >= 0 ? { x: 0, y: 0.28 } : { x: 1, y: 0.72 });
-  }
-
-  return anchors;
-}
-
-function chooseCorridor(
-  candidates: number[],
-  buildSegment: (value: number) => Array<{ a: ScreenPoint; b: ScreenPoint }>,
-  obstacles: RectLike[],
-) {
-  let bestValue = candidates[0];
-  let bestPenalty = Number.POSITIVE_INFINITY;
-  for (const value of candidates) {
-    const penalty = buildSegment(value).reduce((total, segment) => (
-      total + obstacles.filter((rect) => segmentIntersectsRect(segment.a, segment.b, rect, 16)).length
-    ), 0);
-    if (penalty < bestPenalty) {
-      bestPenalty = penalty;
-      bestValue = value;
-    }
-    if (penalty === 0) break;
-  }
-  return bestValue;
-}
-
-function buildElbowRoute(
-  fromRect: { x: number; y: number; w: number; h: number },
-  toRect: { x: number; y: number; w: number; h: number },
-  seed: string,
-  obstacles: RectLike[],
-  context?: SmartAnchorContext,
-): ScreenPoint[] {
-  const anchors = getObstacleAwareAnchors(fromRect, toRect, seed, obstacles, context);
-  const start = anchorToPoint(fromRect, anchors.start);
-  const end = anchorToPoint(toRect, anchors.end);
-  const dx = end.x - start.x;
-  const dy = end.y - start.y;
-  const offset = 18;
-
-  if (
-    (isHorizontalAnchor(anchors.start) && isHorizontalAnchor(anchors.end))
-    || (!isVerticalAnchor(anchors.start) && !isVerticalAnchor(anchors.end) && Math.abs(dx) >= Math.abs(dy))
-  ) {
-    const dir = dx >= 0 ? 1 : -1;
-    const exit = { x: start.x + dir * offset, y: start.y };
-    const enter = { x: end.x - dir * offset, y: end.y };
-    const sidePadding = 44;
-    const candidates = [
-      (exit.x + enter.x) / 2,
-      Math.max(fromRect.x + fromRect.w, toRect.x + toRect.w) + sidePadding,
-      Math.min(fromRect.x, toRect.x) - sidePadding,
-    ];
-    const midX = chooseCorridor(candidates, (value) => [
-      { a: exit, b: { x: value, y: exit.y } },
-      { a: { x: value, y: exit.y }, b: { x: value, y: enter.y } },
-      { a: { x: value, y: enter.y }, b: enter },
-    ], obstacles);
-    return [start, exit, { x: midX, y: exit.y }, { x: midX, y: enter.y }, enter, end];
-  }
-
-  const dir = dy >= 0 ? 1 : -1;
-  const exit = { x: start.x, y: start.y + dir * offset };
-  const enter = { x: end.x, y: end.y - dir * offset };
-  const sidePadding = 44;
-  const candidates = [
-    (exit.y + enter.y) / 2,
-    Math.max(fromRect.y + fromRect.h, toRect.y + toRect.h) + sidePadding,
-    Math.min(fromRect.y, toRect.y) - sidePadding,
-  ];
-  const midY = chooseCorridor(candidates, (value) => [
-    { a: exit, b: { x: exit.x, y: value } },
-    { a: { x: exit.x, y: value }, b: { x: enter.x, y: value } },
-    { a: { x: enter.x, y: value }, b: enter },
-  ], obstacles);
-  return [start, exit, { x: exit.x, y: midY }, { x: enter.x, y: midY }, enter, end];
-}
-
-function toSegments(points: ScreenPoint[]) {
-  const segments: Array<{ a: ScreenPoint; b: ScreenPoint; orientation: 'h' | 'v' }> = [];
-  for (let i = 0; i < points.length - 1; i += 1) {
-    const a = points[i];
-    const b = points[i + 1];
-    if (Math.abs(a.x - b.x) < 0.5 && Math.abs(a.y - b.y) < 0.5) continue;
-    segments.push({
-      a,
-      b,
-      orientation: Math.abs(a.y - b.y) < Math.abs(a.x - b.x) ? 'h' : 'v',
-    });
-  }
-  return segments;
-}
-
-function nudgePointAwayFromRect(
-  point: ScreenPoint,
-  nextPoint: ScreenPoint,
-  rect: RectLike,
-  gap = 12,
-): ScreenPoint {
-  if (Math.abs(point.x - nextPoint.x) < 0.5) {
-    if (Math.abs(point.x - rect.x) < 1) return { x: point.x - gap, y: point.y };
-    if (Math.abs(point.x - (rect.x + rect.w)) < 1) return { x: point.x + gap, y: point.y };
-    if (point.y <= rect.y + 1) return { x: point.x, y: point.y - gap };
-    if (point.y >= rect.y + rect.h - 1) return { x: point.x, y: point.y + gap };
-  }
-  if (Math.abs(point.y - nextPoint.y) < 0.5) {
-    if (Math.abs(point.y - rect.y) < 1) return { x: point.x, y: point.y - gap };
-    if (Math.abs(point.y - (rect.y + rect.h)) < 1) return { x: point.x, y: point.y + gap };
-    if (point.x <= rect.x + 1) return { x: point.x - gap, y: point.y };
-    if (point.x >= rect.x + rect.w - 1) return { x: point.x + gap, y: point.y };
-  }
-  return point;
-}
-
-function addTerminalGap(points: ScreenPoint[], fromRect: RectLike, toRect: RectLike, gap = 12): ScreenPoint[] {
-  if (points.length < 2) return points.map((point) => ({ ...point }));
-  const next = points.map((point) => ({ ...point }));
-  next[0] = nudgePointAwayFromRect(next[0], next[1], fromRect, gap);
-  next[next.length - 1] = nudgePointAwayFromRect(next[next.length - 1], next[next.length - 2], toRect, gap);
-  return next;
-}
-
-function rangesOverlap(a0: number, a1: number, b0: number, b1: number, padding = 0) {
-  const minA = Math.min(a0, a1);
-  const maxA = Math.max(a0, a1);
-  const minB = Math.min(b0, b1) - padding;
-  const maxB = Math.max(b0, b1) + padding;
-  return maxA >= minB && minA <= maxB;
-}
-
-function addEdgeClearance(points: ScreenPoint[], rects: RectLike[], gap = 14): ScreenPoint[] {
-  if (points.length < 2) return points.map((point) => ({ ...point }));
-  const next = points.map((point) => ({ ...point }));
-
-  for (let i = 0; i < next.length - 1; i += 1) {
-    let j = i + 1;
-
-    if (Math.abs(next[i].x - next[j].x) < 0.5) {
-      while (j + 1 < next.length && Math.abs(next[j + 1].x - next[i].x) < 0.5) j += 1;
-      const x = next[i].x;
-      const y0 = next[i].y;
-      const y1 = next[j].y;
-      let shift = 0;
-
-      for (const rect of rects) {
-        if (!rangesOverlap(y0, y1, rect.y, rect.y + rect.h, 8)) continue;
-        const leftDistance = Math.abs(x - rect.x);
-        const rightDistance = Math.abs(x - (rect.x + rect.w));
-        if (leftDistance <= gap) shift = Math.min(shift, -(gap - leftDistance + 2));
-        if (rightDistance <= gap) shift = Math.max(shift, gap - rightDistance + 2);
-      }
-
-      if (shift !== 0) {
-        for (let k = i; k <= j; k += 1) next[k].x += shift;
-      }
-      i = j - 1;
-      continue;
-    }
-
-    if (Math.abs(next[i].y - next[j].y) < 0.5) {
-      while (j + 1 < next.length && Math.abs(next[j + 1].y - next[i].y) < 0.5) j += 1;
-      const y = next[i].y;
-      const x0 = next[i].x;
-      const x1 = next[j].x;
-      let shift = 0;
-
-      for (const rect of rects) {
-        if (!rangesOverlap(x0, x1, rect.x, rect.x + rect.w, 8)) continue;
-        const topDistance = Math.abs(y - rect.y);
-        const bottomDistance = Math.abs(y - (rect.y + rect.h));
-        if (topDistance <= gap) shift = Math.min(shift, -(gap - topDistance + 2));
-        if (bottomDistance <= gap) shift = Math.max(shift, gap - bottomDistance + 2);
-      }
-
-      if (shift !== 0) {
-        for (let k = i; k <= j; k += 1) next[k].y += shift;
-      }
-      i = j - 1;
-    }
-  }
-
-  return next;
-}
-
-function buildBridgePath(segment: { a: ScreenPoint; b: ScreenPoint }, bridges: BridgeMarker[]) {
-  const sorted = [...bridges].sort((a, b) => a.x - b.x);
-  const left = Math.min(segment.a.x, segment.b.x);
-  const right = Math.max(segment.a.x, segment.b.x);
-  let d = `M ${left} ${segment.a.y}`;
-  let cursor = left;
-  for (const bridge of sorted) {
-    const startX = Math.max(cursor, bridge.x - bridge.width / 2);
-    const endX = Math.min(right, bridge.x + bridge.width / 2);
-    if (startX <= cursor || endX <= startX) continue;
-    d += ` L ${startX} ${segment.a.y}`;
-    d += ` C ${startX + bridge.width * 0.18} ${segment.a.y} ${bridge.x - bridge.width * 0.18} ${bridge.y - bridge.height} ${bridge.x} ${bridge.y - bridge.height}`;
-    d += ` C ${bridge.x + bridge.width * 0.18} ${bridge.y - bridge.height} ${endX - bridge.width * 0.18} ${segment.a.y} ${endX} ${segment.a.y}`;
-    cursor = endX;
-  }
-  d += ` L ${right} ${segment.a.y}`;
-  return d;
-}
-
 function applyArrowVisualStyle(
   editor: ReturnType<typeof useEditor>,
   arrowId: ReturnType<typeof createShapeId>,
@@ -688,6 +256,11 @@ function applyArrowVisualStyle(
     },
   } as unknown as Parameters<typeof editor.updateShape>[0]);
 }
+
+// 连线视觉:参考 n8n/React Flow 暗色画布 —— 细、实线、柔和中性灰、静态。
+// 统一灰色不再按节点类型上色,让画布更安静;如需恢复类型色改回 edge.color 即可。
+const CANVAS_EDGE_COLOR = '#5b5b61';
+const CANVAS_EDGE_WIDTH = 1.5;
 
 function CanvasEdgeBridgeOverlay({
   graph,
@@ -720,21 +293,14 @@ function CanvasEdgeBridgeOverlay({
       const toRect = nodeRects.get(edge.target);
       if (!fromRect || !toRect) continue;
       const routed = routedEdgeMap.get(edge.id);
-      const route = routed?.points.length
-        ? routed.points
-        : buildElbowRoute(
-            fromRect,
-            toRect,
-            edge.id,
-            [...nodeRects.entries()]
-              .filter(([id]) => id !== edge.source && id !== edge.target)
-              .map(([, rect]) => rect),
-            contextMap.get(edge.id),
-          );
-      const routeWithClearance = addEdgeClearance(
-        addTerminalGap(route, fromRect, toRect, 12),
-        [...nodeRects.values()],
-        14,
+      const route = buildRenderedRoute(
+        fromRect,
+        toRect,
+        edge.id,
+        [...nodeRects.entries()]
+          .filter(([id]) => id !== edge.source && id !== edge.target)
+          .map(([, rect]) => rect),
+        contextMap.get(edge.id),
       ).map((point) => {
         const screen = editor.pageToScreen(point);
         return { x: screen.x - viewport.x, y: screen.y - viewport.y };
@@ -742,7 +308,8 @@ function CanvasEdgeBridgeOverlay({
       edges.push({
         id: edge.id,
         color: routed?.color ?? (typeof edge.style?.stroke === 'string' ? edge.style.stroke : '#f5f5f5'),
-        segments: toSegments(routeWithClearance),
+        points: route,
+        segments: toSegments(route),
       });
     }
 
@@ -758,6 +325,9 @@ function CanvasEdgeBridgeOverlay({
             if (segA.orientation === segB.orientation) continue;
             const horizontal = segA.orientation === 'h' ? { edge: a, index: ai, segment: segA } : { edge: b, index: bi, segment: segB };
             const vertical = segA.orientation === 'v' ? segA : segB;
+            // 仅对真正轴对齐的段计算交叉跨桥；直连平滑曲线是斜线，跨桥坐标不成立。
+            if (Math.abs(horizontal.segment.a.y - horizontal.segment.b.y) >= 0.5) continue;
+            if (Math.abs(vertical.a.x - vertical.b.x) >= 0.5) continue;
             const minHX = Math.min(horizontal.segment.a.x, horizontal.segment.b.x);
             const maxHX = Math.max(horizontal.segment.a.x, horizontal.segment.b.x);
             const minVY = Math.min(vertical.a.y, vertical.b.y);
@@ -791,23 +361,29 @@ function CanvasEdgeBridgeOverlay({
       >
         {overlay.edges.map((edge) => (
           <g key={edge.id}>
-            {edge.segments.map((segment, index) => {
+            <path
+              d={buildRoundedEdgePath(edge.points)}
+              fill="none"
+              stroke={CANVAS_EDGE_COLOR}
+              strokeWidth={CANVAS_EDGE_WIDTH}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="opacity-90"
+            />
+            {shouldUseDirectVisualPath(edge.points) ? null : edge.segments.map((segment, index) => {
               const bridgeKey = `${edge.id}:${index}`;
               const segmentBridges = overlay.bridges.get(bridgeKey) ?? [];
-              const path = segment.orientation === 'h' && segmentBridges.length
-                ? buildBridgePath(segment, segmentBridges)
-                : `M ${segment.a.x} ${segment.a.y} L ${segment.b.x} ${segment.b.y}`;
+              if (!(segment.orientation === 'h' && segmentBridges.length)) return null;
+              const path = buildBridgePath(segment, segmentBridges);
               return (
                 <path
                   key={bridgeKey}
                   d={path}
                   fill="none"
-                  stroke={edge.color}
-                  strokeWidth="2.5"
-                  strokeDasharray="8 6"
+                  stroke={CANVAS_EDGE_COLOR}
+                  strokeWidth={CANVAS_EDGE_WIDTH}
                   strokeLinecap="round"
                   strokeLinejoin="round"
-                  className="manju-flow-edge"
                 />
               );
             })}
@@ -824,12 +400,13 @@ function updateArrowBindingsForRects(
   fromRect: { x: number; y: number; w: number; h: number } | null,
   toRect: { x: number; y: number; w: number; h: number } | null,
   seed: string,
+  obstacles: RectLike[],
   context?: SmartAnchorContext,
 ) {
   if (!fromRect || !toRect) return;
   const bindings = editor.getBindingsFromShape(arrowId, 'arrow') as unknown as ArrowBindingView[];
   if (!bindings.length) return;
-  const anchors = getSmartAnchors(fromRect, toRect, seed, context);
+  const anchors = getRouteAnchors(fromRect, toRect, seed, obstacles, context);
   editor.updateBindings(bindings.map((binding) => ({
     ...binding,
     props: {
@@ -871,6 +448,8 @@ function CanvasSync({
   const syncedEdgesRef = useRef(new Set<string>());
   const selectedShapeIds = useValue('selectedShapeIds', () => editor.getSelectedShapeIds().map((id) => String(id)), [editor]);
   const lastSelectedRef = useRef<string | null>(null);
+  const pendingNodeSelectTimerRef = useRef<number | null>(null);
+  const pointerGestureRef = useRef({ isDown: false, moved: false, x: 0, y: 0 });
   const effectiveTheme = useEffectiveTheme();
   const restoredUserArrowsForProjectRef = useRef<string | null>(null);
 
@@ -880,6 +459,36 @@ function CanvasSync({
     if (!editor) return;
     editor.user.updateUserPreferences({ colorScheme: effectiveTheme });
   }, [editor, effectiveTheme]);
+
+  useEffect(() => {
+    const handlePointerDown = (event: PointerEvent) => {
+      pointerGestureRef.current = { isDown: true, moved: false, x: event.clientX, y: event.clientY };
+    };
+    const handlePointerMove = (event: PointerEvent) => {
+      const gesture = pointerGestureRef.current;
+      if (!gesture.isDown || gesture.moved) return;
+      const dx = event.clientX - gesture.x;
+      const dy = event.clientY - gesture.y;
+      if ((dx * dx) + (dy * dy) > 16) {
+        pointerGestureRef.current = { ...gesture, moved: true };
+      }
+    };
+    const handlePointerEnd = () => {
+      pointerGestureRef.current = { ...pointerGestureRef.current, isDown: false };
+    };
+
+    window.addEventListener('pointerdown', handlePointerDown, { capture: true });
+    window.addEventListener('pointermove', handlePointerMove, { capture: true });
+    window.addEventListener('pointerup', handlePointerEnd, { capture: true });
+    window.addEventListener('pointercancel', handlePointerEnd, { capture: true });
+
+    return () => {
+      window.removeEventListener('pointerdown', handlePointerDown, { capture: true });
+      window.removeEventListener('pointermove', handlePointerMove, { capture: true });
+      window.removeEventListener('pointerup', handlePointerEnd, { capture: true });
+      window.removeEventListener('pointercancel', handlePointerEnd, { capture: true });
+    };
+  }, []);
 
   useEffect(() => {
     if (!editor || !graph.nodes.length) return;
@@ -900,6 +509,12 @@ function CanvasSync({
       const pos = node.position ?? { x: 0, y: 0 };
       return { x: pos.x, y: pos.y, w: size.w, h: size.h };
     };
+    const getGraphObstacles = (fromId: string, toId: string) => (
+      graph.nodes
+        .filter((node) => node.id !== fromId && node.id !== toId)
+        .map((node) => getGraphRect(node.id))
+        .filter((rect): rect is RectLike => rect != null)
+    );
     const outgoingGroups = new Map<string, CanvasGraphEdge[]>();
     const incomingGroups = new Map<string, CanvasGraphEdge[]>();
     for (const edge of graph.edges) {
@@ -989,6 +604,7 @@ function CanvasSync({
           getGraphRect(edge.source),
           getGraphRect(edge.target),
           edge.id,
+          getGraphObstacles(edge.source, edge.target),
           edgeContextMap.get(edge.id),
         );
         syncedEdgesRef.current.add(edge.id);
@@ -1026,6 +642,7 @@ function CanvasSync({
             getGraphRect(userArrow.from),
             getGraphRect(userArrow.to),
             userArrow.id,
+            getGraphObstacles(userArrow.from, userArrow.to),
             {
               sourceType: graphNodeMap.get(userArrow.from)?.type,
               targetType: graphNodeMap.get(userArrow.to)?.type,
@@ -1090,6 +707,16 @@ function CanvasSync({
           h: shape.props.h ?? MANJU_NODE_SIZE.script.h,
         };
       };
+      const getShapeObstacles = (fromId: string, toId: string) => {
+        const obstacles: RectLike[] = [];
+        for (const shapeId of editor.getCurrentPageShapeIds()) {
+          const nodeId = stripShapePrefix(String(shapeId));
+          if (nodeId === fromId || nodeId === toId) continue;
+          const rect = getShapeRect(nodeId);
+          if (rect) obstacles.push(rect);
+        }
+        return obstacles;
+      };
       for (const id of editor.getCurrentPageShapeIds()) {
         const shape = editor.getShape(id) as unknown as ArrowShapeView | undefined;
         if (!shape || shape.type !== 'arrow' || shape.isLocked) continue;
@@ -1128,6 +755,7 @@ function CanvasSync({
           getShapeRect(record.from),
           getShapeRect(record.to),
           record.id,
+          getShapeObstacles(record.from, record.to),
         );
         rows.push(record);
       }
@@ -1164,13 +792,64 @@ function CanvasSync({
   }, [editor, projectId]);
 
   useEffect(() => {
-    if (!selectedShapeIds.length || !onNodeSelect) return;
+    if (!selectedShapeIds.length || !onNodeSelect) {
+      if (!selectedShapeIds.length) lastSelectedRef.current = null;
+      return;
+    }
     const nodeId = stripShapePrefix(selectedShapeIds[0]);
     // 只对 manjuNode 节点触发聚焦（忽略 arrow 等）。
     if (nodeId.startsWith('arrow-')) return;
     if (lastSelectedRef.current === nodeId) return;
     lastSelectedRef.current = nodeId;
-    onNodeSelect(nodeId);
+
+    const scheduleNodeSelect = () => {
+      if (pendingNodeSelectTimerRef.current != null) {
+        window.clearTimeout(pendingNodeSelectTimerRef.current);
+      }
+      pendingNodeSelectTimerRef.current = window.setTimeout(() => {
+        pendingNodeSelectTimerRef.current = null;
+        onNodeSelect(nodeId);
+      }, 0);
+    };
+
+    if (!pointerGestureRef.current.isDown) {
+      scheduleNodeSelect();
+      return () => {
+        if (pendingNodeSelectTimerRef.current != null) {
+          window.clearTimeout(pendingNodeSelectTimerRef.current);
+          pendingNodeSelectTimerRef.current = null;
+        }
+      };
+    }
+
+    let cancelled = false;
+    function cleanup() {
+      window.removeEventListener('pointerup', finishSelection, { capture: true });
+      window.removeEventListener('pointercancel', cancelSelection, { capture: true });
+    }
+    function finishSelection() {
+      cleanup();
+      const movedDuringGesture = pointerGestureRef.current.moved;
+      window.requestAnimationFrame(() => {
+        if (cancelled || movedDuringGesture) return;
+        scheduleNodeSelect();
+      });
+    }
+    function cancelSelection() {
+      cleanup();
+    }
+
+    window.addEventListener('pointerup', finishSelection, { capture: true, once: true });
+    window.addEventListener('pointercancel', cancelSelection, { capture: true, once: true });
+
+    return () => {
+      cancelled = true;
+      cleanup();
+      if (pendingNodeSelectTimerRef.current != null) {
+        window.clearTimeout(pendingNodeSelectTimerRef.current);
+        pendingNodeSelectTimerRef.current = null;
+      }
+    };
   }, [onNodeSelect, selectedShapeIds]);
 
   return null;
@@ -1571,17 +1250,12 @@ function CanvasInner() {
     }
   }, [projectId, sm, runScriptGen, runStoryboardGen, runVoiceMatch, runRender]);
 
-  // 点选画布节点 = 直接进入对象工作台，并围绕该对象拉起一轮协作。
+  // 点选画布节点 = 只进入对象工作台；具体对话由用户在工作台里主动发起。
   const handleNodeClick = useCallback((nodeId: string) => {
-    const node = layoutedGraph.nodes.find((item) => item.id === nodeId);
-    const isSameNode = selectedNodeId === nodeId;
     setSelectedNodeId(nodeId);
     setAssistantOpen(false);
     setObjectWorkbenchOpen(true);
-    if (!node) return;
-    if (objectWorkbenchOpen && isSameNode) return;
-    void runAgentTurn(undefined, turnContextForNode(node));
-  }, [layoutedGraph.nodes, objectWorkbenchOpen, runAgentTurn, selectedNodeId]);
+  }, []);
 
   // 聊天框拖拽/粘贴/选择参考图 → 暂存并打开上传弹窗（角色资产，自动落画布）。
   const handleAttachImage = useCallback((file: File) => {

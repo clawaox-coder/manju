@@ -13,8 +13,17 @@ describe('Canvas node entry contract', () => {
     );
   });
 
-  it('点节点后的协作上下文围绕当前对象启动，而不是打开独立聊天壳', () => {
-    expect(indexSrc).toContain('void runAgentTurn(undefined, turnContextForNode(node));');
+  it('点节点只打开对象工作台，不自动发起 Agent 对话', () => {
+    const handlerMatch = indexSrc.match(/const handleNodeClick = useCallback\(\(nodeId: string\) => \{[\s\S]*?\n {2}\}, \[\]\);/);
+    expect(handlerMatch?.[0]).toBeTruthy();
+    expect(handlerMatch?.[0]).not.toContain('runAgentTurn');
+    expect(handlerMatch?.[0]).not.toContain('turnContextForNode');
+  });
+
+  it('点选节点要等指针抬起后再打开对象工作台，避免 tldraw 拖拽状态粘住', () => {
+    expect(indexSrc).toContain("window.addEventListener('pointerup', finishSelection, { capture: true, once: true });");
+    expect(indexSrc).toContain('window.requestAnimationFrame(() => {');
+    expect(indexSrc).toContain('if (cancelled || movedDuringGesture) return;');
   });
 
   it('Canvas 主路径不再暴露详情或原地编辑分流', () => {
